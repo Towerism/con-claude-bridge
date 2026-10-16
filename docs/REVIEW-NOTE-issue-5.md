@@ -1,7 +1,12 @@
 # Review note: finishing the architecture documents
 
-This note records the one adversarial review of issue #5's documents and how
-each finding was handled. All 21 findings are fixed in commit `a8b5185`.
+This note records the two adversarial reviews of issue #5's documents and how
+each finding was handled. The first covered the completed architecture, and
+its 21 findings are fixed in commit `a8b5185`. The second covered the later
+change that closed every open question, and its 14 findings are fixed in
+commit `9c5ef08`.
+
+## First pass: the completed architecture
 
 The pass was one adversarial review (Saboteur, New Hire, Security Auditor), run
 by a fresh-context reviewer on 2026-10-16 against `origin/main...HEAD` after
@@ -35,3 +40,30 @@ was not re-run after the fixes.
 | Config and `claude` changes | Note | An invalid `config.toml` and a later `claude` install weren't covered. | Fixed. Both are in the start-up steps and the failure table. The bridge looks up `claude` before each run. |
 | Step 2 dependencies | Note | Step 2 needed the `claude` lookup and `errors.py`, which arrived in later steps. | Fixed. Step 2 gets both, and step 5 completes `errors.py`. |
 | Reader that stops reading | Note | A client that stops reading could block a write and hold a slot forever. | Fixed. A write blocked for 60 seconds counts as a disconnect. |
+
+## Second pass: closing the open questions
+
+The owner asked for every open question to be closed. Commit `3f53854` did
+that, using Con's source at `de2d7c7` and tests against Claude Code 2.1.299 on
+2026-10-16. Because it was a new change made for a different reason, it got
+its own adversarial pass. A fresh-context reviewer ran the pass on 2026-10-16
+and checked the new facts against Con's source, rig-core 0.40.0 and the test
+logs. The verdict was BLOCK (2 critical, 8 warnings, 4 notes). Per the
+one-pass rule, the review was not re-run after the fixes.
+
+| Finding | Severity | What was wrong | How it was handled |
+|---|---|---|---|
+| Waiting rule would always desync | Critical | After a `tool_use` message, Claude Code prints its closing stream events and a `rate_limit_event`, and it prints one `assistant` event per content block. Under the new rule, every run would desync at its first tool call, and a second `tool_use` block would be lost. | Fixed. A message ends at `message_stop`, its blocks are gathered by message ID, and ADR-0007 lists the events that don't count in `waiting`. A facts row records the event order, and an integration scenario covers two `tool_use` blocks. |
+| Diagram contradicted ADR-0002 | Critical | The trust-boundary diagram still showed Claude Code reading `CLAUDE.md`. | Fixed. The edge now runs from the bridge. |
+| `CLAUDE.md` walk underspecified | Warning | A working directory under `~/.claude` would load the global file, paths outside the home directory had no stop, and the file list wasn't tested. | Fixed. Real paths, `~/.claude` always skipped, a stop below `/` outside home, no `@path` imports, and the file list marked as untested. |
+| Untrusted `CLAUDE.md` files | Warning | Any file named `CLAUDE.md` in a cloned repository went into the system prompt unchecked, including pipes or symlinks. | Fixed. Regular files only, 64 KiB per file and 256 KiB in all, and ADR-0006 now treats project instructions and tool output as untrusted, with Con's approval as the safeguard. |
+| `prompting.py` gained I/O | Warning | Reading `CLAUDE.md` broke the "No I/O" claim for `prompting.py`. | Fixed. `claude_runner.py` reads the files, and `prompting.py` gets their text. |
+| Caching claim too strong | Warning | The 95% figure came from a two-word message, but real history follows the changing context and so isn't cached. | Fixed. ADR-0003 says the tools and system prompt are cached and the history isn't, and that a new `CLAUDE.md` set re-caches. |
+| Suggestion cleanup too aggressive | Warning | Removing quotes broke suffixes such as `"fix typo"`, and keeping the first line showed preambles that Con would drop. | Fixed. Only a single-line reply in backticks or a fence is unwrapped, other multi-line replies become empty, and quotes and spaces are kept. |
+| Crash looked like success | Warning | With the body ended by closing the socket, a bridge crash would read as a complete reply. | Fixed. Streams use chunked encoding, so a missing final chunk shows as an error. |
+| Trigger-word rewrite undefined | Warning | No rule said how to rewrite trigger words, and only the message was checked. | Fixed. The final bytes are checked, error responses hold no IDs or numbers, and a quote that trips the check is dropped. |
+| Prompt order not updated | Warning | ADR-0003 and the request steps still put the history first. | Fixed in both. |
+| 60-second header limit | Note | With a per-server timeout, the call didn't time out at 60 s. | Fixed: the limit applies only without one. |
+| Port refusal undefined | Note | "Refuses a port" didn't say how. | Fixed: it logs and exits with status 1, and the failure table has the row. |
+| Capability and tool overlap | Note | `probe_shell_context` is both a capability and a tool. | Fixed: the note says a name in the tool list is a tool. |
+| URL in connection errors | Note | The claim had no facts row. | Fixed: a row cites rig-core's `http_client/mod.rs:256`. |
