@@ -1,23 +1,28 @@
-# Review note: architecture and ADRs
+# Review note: architecture and ADRs 0001–0007
 
-**Pass:** one adversarial review (Saboteur, New Hire, Security Auditor), run by a
-fresh-context reviewer on 2026-10-16. It checked claims against Con commit
-`de2d7c7`, rig-core 0.40.0 and `claude --help` (2.1.299).
-**Verdict:** BLOCK (1 critical, 6 warnings, 6 notes). All fixed in the docs, as
-listed below. Per the one-pass rule, the review was not re-run.
+This records the one adversarial review of the architecture document and ADRs
+0001–0007, done for issue #1, and how each finding was handled. Use it to see
+why those documents say what they do.
 
-| ID | Severity | Finding | Handling |
+A fresh-context reviewer ran the pass on 2026-10-16, reading as three hostile
+personas: a saboteur, a new hire and a security auditor. It checked the claims
+against Con commit `de2d7c7`, rig-core 0.40.0 and `claude --help` from Claude
+Code 2.1.299. The reviewer's verdict was to block the change, on 1 critical
+finding, 6 warnings and 6 notes. The documents were revised to fix all of
+them. Under the project's one-pass rule, the review was not run again.
+
+| Finding | Severity | What was wrong | How it was handled |
 |---|---|---|---|
-| C1 | CRITICAL | Con sends nothing when a turn ends early. Abandoned runs would fill the 2 agent slots and new turns would queue for up to 15 minutes. The "per session" limit can't be built, because Con sends no session ID. | Fixed. New ADR-0007: run states, only `streaming` runs count toward limits, never queue behind a `waiting` run, evict the oldest waiting run, 6-minute idle timer, no per-session limit. |
-| W1 | WARNING | Routing several results per step was underspecified. A result could arrive before Claude's MCP call. | Fixed. ADR-0007 mailboxes: close the response on the complete assistant message, register every ID, route all `tool` messages. |
-| W2 | WARNING | Claude emitting output while no Con response is open was undefined. | Fixed. ADR-0007 `desynced` state: kill the run, mark its IDs stale, replay. |
-| W3 | WARNING | `max_tokens <= 64` never matches. Suggestions use 100, tab labels 2048. | Fixed. ADR-0005 routes requests with no `tools` to the quick path, and kills quick runs on disconnect. Facts row corrected. |
-| W4 | WARNING | Agent runs would load the user's hooks, plugins and global `CLAUDE.md`, and no working directory was set. | Fixed. ADR-0002 points 7 and 8: `--setting-sources ""` plus a bridge settings file, no global `CLAUDE.md`, project `CLAUDE.md` kept, working directory from Con's terminal context. Needs user confirmation. |
-| W5 | WARNING | Con retries a whole turn on certain error words, which would re-propose approved tools. | Fixed. ADR-0007 error table: 409 for mid-turn failures, with no retry words. |
-| W6 | WARNING | The token would show in `/proc/<pid>/cmdline`, and one token unlocked everything. | Fixed. ADR-0006: MCP config in a `0600` temp file, a per-run MCP token, and `con.conf` set to `0600`. |
-| N1 | NOTE | `hashlib` left over from the hashing design. | Fixed (ADR-0004). |
-| N2 | NOTE | The "last 20 messages" wording was slightly wrong. | Fixed (architecture, ADR-0003). |
-| N3 | NOTE | The prompt-caching claim is doubtful, because the system prompt changes every turn. | Fixed: the claim is replaced with "measured, not assumed" (ADR-0003). |
-| N4 | NOTE | Con has an ACP client for handoff history. | Fixed: "no ACP agent or provider support" (ADR-0001). |
-| N5 | NOTE | Denial text varies. Thinking was hidden. | Fixed: results are forwarded unchanged, and thinking goes out as `reasoning_content` (ADR-0002). |
-| N6 | NOTE | Partial-message flag, tool-name prefix and tool-search deferral weren't stated. | Fixed: ADR-0002 point 1, open question 3. |
+| Abandoned runs block new turns | Critical | Con sends nothing when a turn ends early. Abandoned runs would fill both agent slots, and new turns would queue for up to 15 minutes. The planned per-session limit couldn't be built, because Con sends no session ID. | New [ADR-0007](adr/0007-run-lifecycle.md): run states, a limit that counts only `streaming` runs, no queueing behind a `waiting` run, eviction of the oldest waiting run, a 6-minute idle timer, and no per-session limit. |
+| Several results per step | Warning | Routing several results in one step was underspecified, and a result could arrive before Claude's MCP call. | ADR-0007's mailboxes: close the response on Claude's complete assistant message, register every ID, and route every `tool` message. |
+| Claude acting with no response open | Warning | Nothing said what happens when Claude produces output while no Con response is open. | ADR-0007's `desynced` state: kill the run, mark its IDs stale, and replay. |
+| Quick-path rule never matched | Warning | The rule `max_tokens <= 64` never matches, because suggestions use 100 and tab labels 2048. | [ADR-0005](adr/0005-separate-quick-path-for-suggestions.md) now sends requests with no `tools` to the quick path and kills quick runs on disconnect. The facts table was corrected. |
+| User configuration leaking into runs | Warning | Agent runs would load the user's hooks, plugins and global `CLAUDE.md`, and nothing set the working directory. | [ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md) points 7 and 8: `--setting-sources ""` with a bridge settings file, no global `CLAUDE.md`, the project's `CLAUDE.md` kept, and the working directory taken from Con's terminal context. This needs the user's confirmation. |
+| Con's retries repeat approved tools | Warning | Con retries a whole turn when an error contains certain words, which would propose already-approved tools again. | ADR-0007's error table: HTTP 409 for failures mid-turn, worded to avoid every retry word. |
+| Token exposure | Warning | The token would show in `/proc/<pid>/cmdline`, and one token unlocked everything. | [ADR-0006](adr/0006-localhost-service-with-token.md): the MCP config goes in a `0600` temp file, each run gets its own MCP token, and `con.conf` is set to `0600`. |
+| Leftover `hashlib` | Note | `hashlib` was left over from the hashing design. | Removed from [ADR-0004](adr/0004-python-standard-library-runtime.md). |
+| History wording | Note | The "last 20 messages" wording was slightly wrong. | Corrected in the architecture document and [ADR-0003](adr/0003-con-history-is-the-source-of-truth.md). |
+| Prompt-caching claim | Note | The claim that prompt caching would help is doubtful, because the system prompt changes every turn. | ADR-0003 now says the first implementation issue measures it. |
+| Con's ACP support | Note | Con does have an ACP client, used to read history during handoff. | [ADR-0001](adr/0001-openai-chat-completions-as-the-con-interface.md) now says Con can't prompt an ACP agent. |
+| Denials and thinking | Note | Denial text varies, and Claude's thinking was hidden. | ADR-0002 forwards results unchanged and sends thinking as `reasoning_content`. |
+| Unstated details | Note | The partial-message flag, the tool-name prefix and tool-search hiding weren't stated. | ADR-0002 point 1, and open question 3 in the architecture document. |

@@ -1,29 +1,33 @@
 # ADR-0007: Run lifecycle, tool-result mailboxes and error mapping
 
-**Status:** Proposed, 2026-10-16. Added after the adversarial review (findings
-C1, W1, W2 and W5).
+**Status:** Proposed, 2026-10-16. Added after the architecture review for issue
+#1. That review found that abandoned runs could block new turns, that some run
+behaviour was undefined, and that Con's retries could propose approved tools a
+second time. [`docs/REVIEW-NOTE.md`](../REVIEW-NOTE.md) lists the findings.
 
 ## Context
 
-A run is one `claude` process serving one Con turn (ADR-0002). Between Con's
-requests, no HTTP connection is open, and Con doesn't tell the bridge when a
-turn ends early. That happens when:
+A run is one `claude` process serving one Con turn
+([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md)). Between Con's
+requests no HTTP connection is open, and Con doesn't tell the bridge when a turn
+ends early. A turn ends early when:
 
-- the user presses stop (Con stops reading the stream, `provider.rs` around
-  line 2943, or the approval wait returns "Tool approval timed out or
-  cancelled", `hook.rs:207`);
-- rig's model-call budget runs out;
+- the user presses stop. Con stops reading the stream (`provider.rs`,
+  around line 2943), or the approval wait returns "Tool approval timed out or
+  cancelled" (`hook.rs:207`);
+- rig, the library behind Con's agent loop, runs out of model calls for the
+  turn;
 - Con quits.
 
-Con also runs a turn's tool calls one at a time and sends all their results in
-one request. Claude Code may make its MCP (Model Context Protocol) tool calls later than Con's results arrive,
-for example when a user hook slows it down.
+Con runs a turn's tool calls one at a time and sends all their results in one
+request. Claude Code may make its Model Context Protocol (MCP) tool calls after
+Con's results have already arrived, for example when a user hook slows it down.
 
 Con retries a whole turn, up to 3 more times, when an error message contains
 `429`, `500`, `502`, `503`, `timed out` or `connection reset`
 (`is_transient_error` in `crates/con-core/src/harness.rs`). A retry starts again
-from the turn's first request, so a tool call that was already approved would be
-proposed again.
+from the turn's first request, so Con would propose a tool call the user had
+already approved a second time.
 
 ## Decision
 
@@ -33,32 +37,35 @@ Each run is in exactly one state:
 
 | State | Meaning | Leaves when |
 |---|---|---|
-| `streaming` | An HTTP response from Con is open. Claude's output goes to it. | Claude's assistant message has `tool_use` blocks → `waiting`. Claude finishes → `done`. Con disconnects → `dead`. |
-| `waiting` | Tool calls went to Con. No response is open. | A request brings results for this run → `streaming`. The idle timer fires → `dead`. Claude emits anything, or an MCP call ends on Claude's side → `desynced`. |
-| `desynced` | Claude moved on without Con's results (an MCP timeout or a crash). | Immediately → `dead`, and its IDs are marked stale. |
-| `done` / `dead` | The process group is killed and removed from the registry. | — |
+| `streaming` | An HTTP response from Con is open, and Claude's output goes to it. | Claude's assistant message has `tool_use` blocks → `waiting`. Claude finishes → `done`. Con disconnects → `dead`. |
+| `waiting` | Tool calls went to Con, and no response is open. | A request brings results for this run → `streaming`. The idle timer fires → `dead`. Claude emits anything, or an MCP call ends on Claude's side → `desynced`. |
+| `desynced` | Claude moved on without Con's results, after an MCP timeout or a crash. | At once → `dead`, with its IDs marked stale. |
+| `done` / `dead` | The bridge has killed the process group and removed the run from its registry. | — |
 
 ### Mailboxes
 
-- The bridge closes Con's response when the **complete assistant message**
-  arrives in `stream-json`, not when the first MCP call arrives. At that moment
-  it registers one mailbox per `tool_use` ID.
-- A request with results routes **every** `tool` message after the last
-  assistant `tool_calls` message into those mailboxes. Results may arrive before
-  or after the matching MCP call. Whichever comes second completes the pair.
-- If a request's IDs belong to a run in `waiting`, it goes to that run. It is
-  never treated as a miss. If they match no run, or a stale one, it goes to
-  replay (ADR-0003).
+The bridge closes Con's response when Claude's complete assistant message
+arrives in `stream-json`, not when the first MCP call arrives. At that point it
+opens one mailbox per `tool_use` ID.
+
+A request with results puts every `tool` message after the last assistant
+`tool_calls` message into those mailboxes. A result may arrive before or after
+its MCP call; whichever comes second completes the pair.
+
+When a request's IDs belong to a `waiting` run, the request goes to that run
+and never counts as a miss. When they match no run, or a stale one, the bridge
+replays the turn ([ADR-0003](0003-con-history-is-the-source-of-truth.md)).
 
 ### Limits and timers
 
-- The limit counts only `streaming` runs: at most 2 agent runs and 2 quick
-  runs. A run in `waiting` doesn't count. An agent request never waits behind a
-  run that is `waiting`.
-- When a third run would start, the oldest `waiting` run is killed to make room.
-  If every run is `streaming`, the request gets HTTP 409 (below).
-- The idle timer for `waiting` is 6 minutes. That is Con's 5-minute approval
-  timeout plus a 1-minute margin.
+- Only `streaming` runs count toward the limit of 2 agent runs and 2 quick
+  runs. A `waiting` run doesn't count, and an agent request never queues behind
+  one.
+- When a third run would start, the bridge kills the oldest `waiting` run to
+  make room. If every run is `streaming`, the request gets HTTP 409 (see
+  Errors).
+- A `waiting` run dies after 6 minutes idle, which is Con's 5-minute approval
+  timeout with a minute to spare.
 - There is no per-conversation limit. Con sends no conversation ID, and the
   bridge doesn't invent one (ADR-0003).
 
@@ -66,9 +73,9 @@ Each run is in exactly one state:
 
 | Situation | Response | Why |
 |---|---|---|
-| Claude Code's own API is rate-limited or overloaded before any output | 429 or 503 | Con's retry is correct here: nothing has run yet. |
-| Run lost or desynced mid-turn, or the agent limit is reached | HTTP 409 with a message that avoids every retry trigger word | A retry would propose already-approved tools again. |
-| Bad request (schema, auth, `Host`) | 400, 401 or 403 | Not retryable. |
+| Claude Code's own API is rate-limited or overloaded before any output | 429 or 503 | Nothing has run yet, so Con's retry is safe. |
+| The run is lost or desynced mid-turn, or the agent limit is reached | HTTP 409, with a message that contains none of Con's retry trigger words | A retry would propose already-approved tools again. |
+| Bad request: schema, auth or `Host` | 400, 401 or 403 | Retrying can't help. |
 
 Any error response kills the run it belongs to.
 
@@ -76,6 +83,7 @@ Any error response kills the run it belongs to.
 
 - Pressing stop twice during approvals no longer blocks new turns.
 - An abandoned run lives at most 6 minutes.
-- Tests must cover every state change in the table, results arriving before
-  their MCP call, several results in one request, cancel during approval
-  followed by a new turn, and the error mapping against Con's retry words.
+- The tests must cover every state change in the table, results that arrive
+  before their MCP call, several results in one request, a cancel during
+  approval followed by a new turn, and each error response checked against
+  Con's retry words.

@@ -4,50 +4,51 @@
 
 ## Context
 
-Con's inline shell suggestions and tab labels use the "suggestion model". If no
-suggestion provider is set, they go to the main provider. Both are one-shot
-calls with no tools: suggestions use `max_tokens = 100`
-(`AgentProvider::complete` in `provider.rs`) and tab labels use 2048
-(`tab_summary.rs`). Con's agent requests always carry tools.
-They fire often (suggestions on typing pauses, labels on tab changes). A full
-Claude Code agent run for each one would be slow and would use up the Claude
-plan's limits.
+Con's inline shell suggestions and its tab labels use the "suggestion model",
+which falls back to the main provider when no suggestion provider is set. Both
+are one-shot calls with no tools. Suggestions ask for `max_tokens = 100`
+(`AgentProvider::complete` in `provider.rs`) and tab labels for 2048
+(`tab_summary.rs`), while Con's agent requests always carry tools.
+
+These calls fire often: suggestions on pauses in typing, and labels on tab
+changes. Running a full Claude Code agent for each would be slow and would
+use up the Claude plan's limits.
 
 ## Decision
 
-The bridge serves two model names, listed in `/v1/models`:
+The bridge serves two model names, both listed in `/v1/models`:
 
 | Model name | Profile | What runs |
 |---|---|---|
-| `claude-code` | `agent` | The full Claude Code run from ADR-0002 and ADR-0003. |
-| `claude-quick` | `quick` | `claude -p --model haiku --tools "" --no-session-persistence --setting-sources ""`, one shot, no session, Con's system prompt passed through as the system prompt. |
+| `claude-code` | `agent` | The full Claude Code run from [ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md) and [ADR-0003](0003-con-history-is-the-source-of-truth.md). |
+| `claude-quick` | `quick` | `claude -p --model haiku --tools "" --no-session-persistence --setting-sources ""`, one shot with no session, and Con's system prompt passed on as the system prompt. |
 
-A request is routed to `quick` if it names `claude-quick`, or if it has no
-`tools`. The second rule catches suggestion and tab-label traffic even when
-`con.agent.suggestion_model.model` isn't set.
-
-The setup guide sets:
+The bridge sends a request to `quick` when it names `claude-quick` or carries no
+`tools`. The second rule catches suggestions and tab labels even if the user
+never sets `con.agent.suggestion_model.model`. The setup guide still sets it:
 
 ```ini
 con.agent.suggestion_model.model = claude-quick
 ```
 
-The guide also says how to turn suggestions off
-(`con.agent.suggestion_model.enabled = false`) for anyone who wants no
+The guide also shows how to turn suggestions off,
+`con.agent.suggestion_model.enabled = false`, for anyone who wants no
 background traffic.
 
-Quick runs end when Con disconnects. Con cancels a stale suggestion by dropping
-the request, and the bridge kills that run at once, so old runs don't hold the
-slots. Limits are in ADR-0007. Past the limit, a quick request gets HTTP 429,
-which Con treats as "no suggestion".
+A quick run ends as soon as Con disconnects. Con cancels a stale suggestion
+that way, by dropping the request, and the bridge kills the run at once, so old
+runs don't hold the slots.
+[ADR-0007](0007-run-lifecycle.md) sets the limits. Past them, a quick request
+gets HTTP 429, which Con treats as "no suggestion".
 
 Tab-label requests ask for bare JSON. The quick path loads no settings and no
-`CLAUDE.md`, so nothing adds text around it. The first issue checks this.
-(`--bare` would do the same, but it refuses OAuth logins.)
+`CLAUDE.md`, so nothing should wrap extra text around the JSON; the first
+implementation issue checks this. `--bare` would do the same job, but it
+refuses OAuth logins, which is how Claude Code is usually signed in.
 
 ## Consequences
 
-- Suggestions stay fast and cheap, but they still use the Claude Code login, so
-  they count against the plan.
-- The "no tools" rule depends on Con's current request shapes. If Con changes
-  them, the explicit `claude-quick` setting still works.
+- Suggestions stay fast and cheap. They still go through the Claude Code login,
+  so they count against the plan.
+- The "no tools" rule relies on how Con shapes its requests today. If Con
+  changes that, the explicit `claude-quick` setting keeps working.
