@@ -18,9 +18,10 @@ page pose as `localhost`.
   changed with `BRIDGE_PORT`.
 - Every route except `/healthz` requires `Authorization: Bearer <token>`. On
   first start, or when `con-claude-bridge setup` runs, the bridge creates the
-  token, 32 random bytes from `secrets.token_urlsafe`, at `$XDG_CONFIG_HOME/con-claude-bridge/token` with
-  mode `0600`. Con sends it as
-  `con.agent.providers.openai-compatible.api_key`.
+  token, 32 random bytes from `secrets.token_urlsafe`, at
+  `$XDG_CONFIG_HOME/con-claude-bridge/token` with mode `0600`. Con sends it
+  as `con.agent.providers.openai-compatible.api_key`. The bridge reads the
+  token at start-up, so a new token needs a restart.
 - The bridge rejects any request whose `Host` header isn't
   `127.0.0.1:<port>` or `localhost:<port>`, which blocks DNS rebinding.
 - The Model Context Protocol (MCP) endpoint that `claude` calls,
@@ -47,14 +48,19 @@ page pose as `localhost`.
   1. The `BRIDGE_CLAUDE_BIN` setting, an absolute path. The environment
      variable wins over `claude_bin` in
      `$XDG_CONFIG_HOME/con-claude-bridge/config.toml`, the file that holds
-     every setting ([`configuration.md`](../configuration.md)).
+     every setting ([`configuration.md`](../configuration.md)). When this
+     setting is present, the bridge checks nothing else. If no executable
+     file is at that path, `claude` counts as not found, so the bridge never
+     runs a binary the user didn't choose.
   2. `~/.local/bin/claude`, where Anthropic's self-updating installer puts it.
   3. `claude` on `PATH`.
 
   At start-up the bridge logs the path it chose and the output of
   `claude --version`. If it finds nothing, the log lists the paths it checked.
-  `/healthz` needs no token, so it says only `claude not found` and never shows
-  the home directory. It reports only an overall status, whether `claude` was
+  It looks `claude` up again before each run and logs any change, so
+  installing or moving `claude` needs no restart. `/healthz` needs no token,
+  so it says only that `claude` was not found and never shows the home
+  directory. It reports only an overall status, whether `claude` was
   found and the self-test result, never paths, versions or run counts
   ([the architecture document](../architecture.md#observability)).
 - Logs go to the journal. By default they hold metadata only: profile, run ID,

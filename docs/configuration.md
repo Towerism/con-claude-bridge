@@ -18,8 +18,8 @@ The environment variable wins. The bridge reads settings once, at start-up.
 | `config.toml` key | Environment variable | Default | What it does |
 |---|---|---|---|
 | `port` | `BRIDGE_PORT` | `8765` | The port on `127.0.0.1`. The bridge never binds any other address ([ADR-0006](adr/0006-localhost-service-with-token.md)). |
-| `claude_bin` | `BRIDGE_CLAUDE_BIN` | Not set | An absolute path to `claude`. When it isn't set, the bridge tries `~/.local/bin/claude` and then `claude` on `PATH` (ADR-0006). |
-| `agent_model` | `BRIDGE_AGENT_MODEL` | Not set | The `--model` for agent runs, such as `opus` or `sonnet`. When it isn't set, agent runs use Claude Code's default model. The user's own Claude Code settings don't load in agent runs, so this is the only way to pick one ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md), point 7). |
+| `claude_bin` | `BRIDGE_CLAUDE_BIN` | Not set | An absolute path to `claude`. When it is set, the bridge uses only that path. If nothing executable is there, `claude` counts as not found, with no fallback. When it isn't set, the bridge tries `~/.local/bin/claude` and then `claude` on `PATH` (ADR-0006). |
+| `agent_model` | `BRIDGE_AGENT_MODEL` | Not set | The `--model` for agent runs, such as `opus` or `sonnet`. When it isn't set, agent runs use Claude Code's default model. The user's own Claude Code settings don't load in agent runs, so this is the supported way to pick one ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md), point 7). |
 | `quick_model` | `BRIDGE_QUICK_MODEL` | `haiku` | The `--model` for quick runs: suggestions, tab labels and the self-test ([ADR-0005](adr/0005-separate-quick-path-for-suggestions.md)). |
 | `log_content` | `BRIDGE_LOG_CONTENT` | `false` | When `true`, the journal also gets prompts, replies and tool results. For debugging only: it makes the journal a copy of every conversation. |
 
@@ -111,10 +111,11 @@ package leaves these in place:
 
 | Path | Mode | What it is |
 |---|---|---|
-| `~/.config/con-claude-bridge/token` | `0600` | The bearer token, created on first start or by `setup`. Delete it and run `setup` again to change it, then update `con.conf`. |
+| `~/.config/con-claude-bridge/token` | `0600` | The bearer token, created on first start or by `setup`. To change it, delete it, run `setup` again, paste the new lines into `con.conf` and run `systemctl --user restart con-claude-bridge`, because the bridge reads the token only at start-up. |
 | `~/.config/con-claude-bridge/config.toml` | Any | Optional settings, as above. |
 | `~/.config/systemd/user/con-claude-bridge.service.d/override.conf` | Any | Optional drop-in from `systemctl --user edit`. |
 | `~/.config/con/con.conf` | `0600` | Con's own settings, holding the token. |
 
-While the bridge runs, each live run also has a `--mcp-config` file with mode
-`0600` in the unit's private `/tmp`. The bridge deletes it when the run ends.
+While the bridge runs, each live run also has two files with mode `0600` in
+the unit's private `/tmp`: its `--mcp-config` and its system prompt. The
+bridge deletes them when the run ends.

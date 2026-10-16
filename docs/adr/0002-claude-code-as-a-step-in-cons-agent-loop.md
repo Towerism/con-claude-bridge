@@ -63,13 +63,14 @@ them, and sends the next request with each result tagged by its
 7. Which Claude Code configuration loads. Agent runs use `--setting-sources ""`
    and a settings file the bridge owns, so the user's hooks, plugins and
    permission rules don't load. They would otherwise act on Con's tool calls
-   where Con can't see them. The user's choice of model doesn't load either,
-   so the bridge's `agent_model` setting picks it, and Claude Code's default
+   where Con can't see them. The user's choice of model doesn't load either, so
+   the bridge's `agent_model` setting picks it, and Claude Code's default
    applies when that isn't set
-   ([`configuration.md`](../configuration.md#bridge-settings)). The bridge also aims to leave out the global
-   `~/.claude/CLAUDE.md`. The user wrote it for their own Claude Code sessions,
-   with rules such as an issue pipeline and skills, and it would steer Con's
-   agent. A `CLAUDE.md` in the project's working directory does apply.
+   ([`configuration.md`](../configuration.md#bridge-settings)). The bridge also
+   aims to leave out the global `~/.claude/CLAUDE.md`. The user wrote it for
+   their own Claude Code sessions, with rules such as an issue pipeline and
+   skills, and it would steer Con's agent. A `CLAUDE.md` in the project's
+   working directory does apply.
 
    This project hasn't yet checked whether `--setting-sources` also decides
    which `CLAUDE.md` files load, so the first implementation issue tests it. If

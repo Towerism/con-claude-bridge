@@ -34,9 +34,11 @@ The bridge succeeds when all of these hold:
 
 - Every action Claude takes is a Con tool call, shown in Con's tool card and
   run only after Con's approval prompt, exactly as with any other provider.
-- Nothing outside the user's own Con can drive it: no other local process, no
+- Nothing but the user's own Con can drive it: no other user's process, no
   web page and no other machine
-  ([ADR-0006](adr/0006-localhost-service-with-token.md)).
+  ([ADR-0006](adr/0006-localhost-service-with-token.md)). A process running
+  as the same user can read the token, as it can read everything else the
+  user owns.
 - It installs with `pacman` and needs nothing at run time beyond Python and
   `claude` ([ADR-0004](adr/0004-python-standard-library-runtime.md),
   [ADR-0008](adr/0008-aur-release-package.md)).
@@ -61,8 +63,9 @@ These are out of scope:
 ## Who talks to whom
 
 The diagram shows each party the bridge deals with and which ones it trusts.
-The dashed box is the trust boundary: only Con, holding the bearer token, and
-the bridge's own `claude` runs, holding a per-run token, get past it.
+The dashed inner box is the trust boundary: only Con, holding the bearer
+token, and the bridge's own `claude` runs, holding a per-run token, get past
+it.
 
 ```mermaid
 flowchart LR
@@ -84,6 +87,7 @@ flowchart LR
     Con -- "runs approved tools in panes" --> Files
     Claude -. "reads the project's CLAUDE.md only" .-> Files
     Other -. "rejected: no token, wrong Host<br/>or content type" .-> Bridge
+    style trusted stroke-dasharray: 5 5
 ```
 
 Claude Code never writes to the project itself. Every change to the files goes
@@ -148,16 +152,16 @@ each do one job. Every behaviour named in the ADRs has exactly one owner here.
 
 | Module | Owns |
 |---|---|
-| `cli.py` | The `con-claude-bridge` entry point. With no subcommand it serves: it runs the start-up sequence below and then the HTTP server. `con-claude-bridge setup` creates the token if it is missing, prints the `con.conf` lines to paste and sets `~/.config/con/con.conf` to mode `0600` ([ADR-0006](adr/0006-localhost-service-with-token.md)). `__main__.py` calls it, so `python -m con_claude_bridge` works too. |
+| `cli.py` | The `con-claude-bridge` entry point. With no subcommand it serves: it runs the start-up sequence below, using `claude_runner.py` to find `claude`, and then the HTTP server. `con-claude-bridge setup` creates the token if it is missing, prints the `con.conf` lines to paste and sets `~/.config/con/con.conf` to mode `0600` ([ADR-0006](adr/0006-localhost-service-with-token.md)). `__main__.py` calls it, so `python -m con_claude_bridge` works too. |
 | `server.py` | HTTP routes: `/v1/models`, `/v1/chat/completions`, `/mcp/<run-id>` and `/healthz`. Streams Server-Sent Events (SSE) responses to Con and to `claude`. While an MCP `tools/call` waits for its result, the handler sends a progress message every 30 seconds ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md), point 5). Detects a client that has gone away. |
 | `auth.py` | Creates and reads the bearer token file, compares tokens in constant time with `hmac.compare_digest`, checks the `Host` header and content type, and issues each run's MCP token (ADR-0006). |
 | `openai_protocol.py` | Parses Chat Completions requests and builds response chunks, including `tool_calls` and `reasoning_content`. No I/O. |
 | `mcp_protocol.py` | The small part of MCP the bridge serves: `initialize`, `tools/list`, `tools/call` and `notifications/progress`. Converts Con's tool definitions to MCP tools, and adds or strips the `mcp__con__` prefix. No I/O. |
 | `routing.py` | Decides what a request is: a `quick` request, results for a `waiting` run, a replay, or a new agent run ([ADR-0005](adr/0005-separate-quick-path-for-suggestions.md), [ADR-0003](adr/0003-con-history-is-the-source-of-truth.md)). Takes the parsed request and a lookup from the registry, and returns the decision. No I/O. |
-| `runs.py` | The registry of live runs and their state machine ([ADR-0007](adr/0007-run-lifecycle.md)): states, result mailboxes, the agent and quick limits, eviction of the oldest `waiting` run, and the idle reaper. Each run owns its `claude` process, its MCP token and its temp `--mcp-config` file. |
-| `prompting.py` | Writes Con's history as the prompt for a new run, adding this turn's tool calls and results when replaying. Passes Con's system prompt with `--append-system-prompt`, and reads the pane's working directory from its `<terminal_context>` block. No I/O. |
-| `claude_runner.py` | Finds the `claude` binary (ADR-0006), builds its command line, starts it in its own process group, parses `stream-json` events from its output, and kills the group on cancel. Knows nothing about HTTP or Con. |
-| `selftest.py` | The start-up self-test for `_meta["claudecode/toolUseId"]` ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md)), described under [Start-up and shutdown](#start-up-and-shutdown). |
+| `runs.py` | The registry of live runs and their state machine ([ADR-0007](adr/0007-run-lifecycle.md)): states, result mailboxes, the agent and quick limits, eviction of the oldest `waiting` run, and the idle reaper. It checks every MCP call for `_meta["claudecode/toolUseId"]`, and holds the self-test status that `/healthz` reports and that decides whether agent requests are refused. Each run owns its `claude` process, its MCP token and its temp files. |
+| `prompting.py` | Writes Con's history as the prompt for a new run, adding this turn's tool calls and results when replaying. Builds the system prompt text from Con's, and reads the pane's working directory from its `<terminal_context>` block. No I/O. |
+| `claude_runner.py` | Finds the `claude` binary (ADR-0006) before each run, builds its command line, and starts it in its own process group. Writes the prompt to its standard input, and passes the system prompt and the `--mcp-config` as mode `0600` temp files, never as arguments: an argument is limited to 128 KiB, and any local user can read it in `/proc/<pid>/cmdline`. Parses `stream-json` events from its output, drains its standard error, and kills the group on cancel. Knows nothing about HTTP or Con. |
+| `selftest.py` | Runs the start-up self-test for `_meta["claudecode/toolUseId"]` ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md)) and records its result in the registry. [Start-up and shutdown](#start-up-and-shutdown) describes it. |
 | `errors.py` | Maps each failure to the HTTP status and message in ADR-0007's error table, and keeps the list of Con's retry trigger words that agent-path messages must not contain. No I/O. |
 | `config.py` | Reads settings from environment variables and `config.toml`. Environment variables win. [`configuration.md`](configuration.md) lists them. |
 | `log.py` | Sets up logging to standard error, which systemd sends to the journal, and keeps prompt and reply text out of the log unless `log_content` is on ([Observability](#observability)). |
@@ -172,6 +176,7 @@ flowchart TD
     cli --> selftest
     cli --> auth
     cli --> log
+    cli --> claude_runner
     selftest --> runs
     server --> routing
     server --> runs
@@ -232,53 +237,72 @@ from `claude`. A few more threads run alongside:
 | Thread | Count | Job |
 |---|---|---|
 | Request handler | One per open HTTP request | Serves the request. For Con's chat request it streams the run's events until the response ends. For an MCP `tools/call` it waits on the run's mailbox, waking every 30 seconds to send progress. |
-| Run reader | One per live run | Reads `claude`'s standard output line by line, parses each `stream-json` event, and hands it to the run. |
-| Idle reaper | One | Wakes every 5 seconds and kills `waiting` runs that have been idle for 6 minutes. |
+| Run readers | Two per live run | One reads `claude`'s standard output line by line, parses each `stream-json` event and hands it to the run. The other drains standard error into a 64 KiB buffer, so `claude` never blocks on a full pipe. |
+| Idle reaper | One | Sleeps until the earliest `waiting` run's 6-minute deadline, or until a new deadline is set, and kills the runs that are due. |
 | Self-test | One, at start-up | Runs the self-test without holding up the server. |
 
 One lock in `runs.py` guards the registry and every run's state. State
 changes, opening mailboxes and counting runs against the limits all happen
-while holding it. So two requests can't both take the last free slot, and a
-result can't slip in between a mailbox opening and its MCP call. Nothing holds
+while holding it, so two requests can't both take the last free slot.
+
+A tool call's mailbox opens at whichever comes first: the run reader parsing
+Claude's assistant message, or Claude's MCP call for that ID. The two arrive
+by different routes, standard output and HTTP, so either can be first. The
+later one finds the mailbox already open and uses it. Nothing holds
 the lock while writing to a socket or waiting on a process. Each run passes
 events to the open Con response through its own queue, and each mailbox is a
 one-slot queue that its MCP handler thread waits on.
 
-A handler streaming to Con notices that Con has gone away when a write fails.
-While it waits for the next event, it also checks the socket for end-of-file
-every second. Without the check, a stale suggestion would keep its quick
+A handler streaming to Con notices that Con has gone away when a write fails,
+or when a write blocks for 60 seconds because Con stopped reading. While it
+waits for the next event, it also checks the socket for end-of-file every
+second. Without the check, a stale suggestion would keep its quick
 run until Claude next produced output.
 
 ## Start-up and shutdown
 
 When the service starts, `cli.py`:
 
-1. Reads the settings (`config.py`).
+1. Reads the settings (`config.py`). If `config.toml` isn't valid, it logs
+   why and exits with status 1.
 2. Finds `claude` (ADR-0006) and logs its path and `claude --version`. If it
    finds nothing, it logs the paths it checked and keeps serving, so
-   `/healthz` can report the problem.
+   `/healthz` can report the problem. The bridge looks `claude` up again
+   before each run and logs when the path changes, so installing or moving
+   `claude` needs no restart.
 3. Reads the bearer token, creating it if it is missing.
 4. Binds `127.0.0.1` on the configured port. If the port is taken, it logs the
    port and exits with status 1, and systemd shows the unit as failed.
 5. Starts the idle reaper and the HTTP server.
 6. Starts the self-test in the background.
 
-The self-test starts one quick-model run whose MCP server lists a single tool,
-`bridge_selftest`, and asks Claude to call it. It passes when the MCP call's
-`_meta["claudecode/toolUseId"]` matches the `tool_use` ID in `stream-json`.
-It costs one small call to the quick model each time the service starts, and
-it doesn't count toward the run limits.
+The self-test is a run of its own kind, `selftest`, outside ADR-0007's states
+and limits. It uses the quick model, and its MCP server lists a single tool,
+`bridge_selftest`, which Claude is asked to call. It costs one small call to
+the quick model each time the service starts. It has three outcomes:
+
+- **Passed:** the MCP call's `_meta["claudecode/toolUseId"]` matches the
+  `tool_use` ID in `stream-json`.
+- **Failed:** the MCP call arrived without the field, or with an ID that
+  doesn't match. Nothing else counts as failed.
+- **Couldn't finish:** anything else, such as no MCP call within 60 seconds,
+  Claude not calling the tool, or `claude` exiting with an error.
 
 | Self-test result | What the bridge does |
 |---|---|
 | Passed | Serves agent requests. |
-| The field is missing or doesn't match | Refuses agent requests until restarted, as ADR-0002 requires, and logs why. Quick requests still work. |
-| Couldn't finish: `claude` missing, not logged in, or offline (a user service can start before the network is up) | Serves agent requests, and checks the field on every MCP call instead. The first call without it switches the bridge to refusing, as above. The next agent request also reruns the self-test once, in the background. |
+| Failed | Refuses agent requests with 503 until restarted, as ADR-0002 requires, and logs why. Quick requests still work. |
+| Couldn't finish, for example because Claude Code isn't logged in or the network isn't up yet (a user service can start before it is) | Serves agent requests, and checks the field on every MCP call instead. The first call that has the field marks the self-test passed. The first call without it marks it failed, kills that run at once and marks its IDs stale. From then on every agent request gets 503, including Con's next step for those IDs. Con may retry, but each retry is refused before anything runs, so no tool is proposed twice. The next agent request also reruns the self-test once, in the background. |
+| Not run, because `claude` wasn't found | Every chat request gets 503 (ADR-0007). The self-test runs once `claude` is found. |
 
 On `SIGTERM`, which is how systemd stops the unit, the bridge stops accepting
-requests, kills every run's process group, deletes the runs' `--mcp-config`
-files and exits with status 0. Con's open streams end, and Con shows the
-dropped connection as an error for that turn.
+requests and ends each open stream to Con cleanly. It sends an error chunk
+saying the bridge is stopping, with none of Con's retry trigger words, then
+`data: [DONE]`, then closes the socket normally, never with a reset. A reset
+would show in Con as `connection reset`, and Con would retry the turn and
+propose approved tools again. Then the bridge kills every run's process
+group, deletes the runs' temp files and exits with status 0. How Con shows
+that error chunk is open question 7.
 
 ## Where state lives
 
@@ -287,7 +311,7 @@ dropped connection as an error for that turn.
 | Live runs | Bridge memory | One Con turn. Killed when the turn ends, when Con disconnects mid-stream, or after 6 minutes waiting for Con. |
 | Bearer token | `$XDG_CONFIG_HOME/con-claude-bridge/token` (mode `0600`), and in `con.conf` | Until regenerated. |
 | Settings | Environment variables, a `systemctl --user edit` drop-in, and `$XDG_CONFIG_HOME/con-claude-bridge/config.toml` | Until the user changes them. Read at start-up. |
-| Run MCP config | A mode `0600` temp file per run, in the unit's private `/tmp` | One run. |
+| Run MCP config and system prompt | Mode `0600` temp files per run, in the unit's private `/tmp` | One run. |
 | Logs | The systemd journal | As the journal is configured. |
 
 `$XDG_CONFIG_HOME` falls back to `~/.config` when it isn't set, which is usual
@@ -301,8 +325,9 @@ at login through `WantedBy=default.target`, as the user and with the user's
 Claude Code login (ADR-0006). There are two ways to install it:
 
 - **The Arch User Repository (AUR) package**
-  ([ADR-0008](adr/0008-aur-release-package.md)), for users. pacman installs the entry point at `/usr/bin/con-claude-bridge`, the
-  package under `/usr/lib/python3.N/site-packages/` and the unit at
+  ([ADR-0008](adr/0008-aur-release-package.md)), for users. pacman installs the
+  entry point at `/usr/bin/con-claude-bridge`, the package under
+  `/usr/lib/python3.N/site-packages/` and the unit at
   `/usr/lib/systemd/user/con-claude-bridge.service`. The user then runs
   `con-claude-bridge setup` and
   `systemctl --user enable --now con-claude-bridge`.
@@ -322,17 +347,20 @@ the machine.
 
 | Failure | What the user sees | What the bridge does |
 |---|---|---|
-| `claude` isn't found | Con shows an error saying `claude` wasn't found. `/healthz` says `claude not found`. | Answers each chat request with 503. Nothing has run, so Con's retries are safe. The journal lists the paths checked. |
-| Claude Code isn't logged in, or its API is rate-limited or down, before any output | Con retries, then shows Claude Code's error | 429 or 503 with Claude Code's error text (ADR-0007). |
-| The user presses stop, or the approval times out | Nothing more | The run waits until the next turn evicts it or its 6-minute idle timer kills it (ADR-0007). |
+| `config.toml` isn't valid | The unit shows as failed | Logs the problem and exits with status 1. |
+| `claude` isn't found | Con shows an error saying `claude` wasn't found. `/healthz` shows `"claude": "not_found"`. | Answers each chat request with 503 and runs no self-test. Nothing has run, so Con's retries are safe. The journal lists the paths checked. |
+| Claude Code isn't logged in, or its API is rate-limited or down, before any output | Con retries, then shows Claude Code's error | 429 or 503 with Claude Code's error text: the `result` event's text, or the last line of standard error if `claude` exits without one (ADR-0007). |
+| The user presses stop while Claude is streaming | Nothing more | Con disconnects, so the run is `dead` and killed at once (ADR-0007). |
+| The user presses stop during approval, or the approval times out | Nothing more | The `waiting` run stays until a later turn needs its slot or its 6-minute idle timer kills it (ADR-0007). |
 | The bridge restarts mid-turn | The next step continues, with a fresh `claude` process | The result's ID matches no run, so the bridge replays the turn from Con's request (ADR-0003). |
 | `claude` crashes, or an MCP call times out on Claude Code's side | Con shows an error for the turn and doesn't retry | The run becomes `desynced` and then `dead`. Its IDs go stale. The next request for them gets 409 (ADR-0007). |
 | A third agent turn starts while two are streaming | Con shows a "busy" error and doesn't retry | 409, with no retry trigger words (ADR-0007). |
-| Claude Code stops sending `toolUseId` | Agent requests fail with a message pointing to the journal. Suggestions still work. | Refuses agent requests until restarted (see [Start-up and shutdown](#start-up-and-shutdown)). |
+| Claude Code stops sending `toolUseId` | Agent requests fail with a message pointing to the journal. Suggestions still work. | 503 for every agent request until restarted (see [Start-up and shutdown](#start-up-and-shutdown)). |
+| The bridge is stopped or restarted mid-turn | Con shows a "bridge stopping" error for that turn | Ends each stream cleanly, as above. The next step replays (ADR-0003). |
 | The port is taken | The unit shows as failed | Logs the port and exits with status 1. |
 
-Every row that kills a run also kills its process group and deletes its
-`--mcp-config` file.
+Every row that kills a run also kills its process group and deletes its temp
+files.
 
 ## Observability
 
@@ -345,8 +373,9 @@ journalctl --user -u con-claude-bridge -f
 At start-up the bridge logs the `claude` path and version, the port and the
 self-test result. For each run it logs one line per state change. The line
 holds the run ID, the profile (`agent` or `quick`), the new state and the
-time since the run started, and the last line adds `claude`'s exit status. Prompts, replies and
-tool results stay out of the log. The `log_content` setting adds them, for
+time since the run started, and the last line adds `claude`'s exit status.
+Prompts, replies and tool results stay out of the log, and so does `claude`'s
+standard error, which can quote them. The `log_content` setting adds them, for
 debugging only, because the journal is then a copy of the conversation
 ([`configuration.md`](configuration.md)).
 
@@ -357,10 +386,13 @@ process to see:
 {"status": "ok", "claude": "found", "self_test": "passed"}
 ```
 
-`status` is `ok` or `degraded`. `claude` is `found` or `claude not found`.
-`self_test` is `pending` (not finished, or couldn't finish), `passed` or
-`failed`. It never shows
-paths, run counts or versions. Those are in the journal.
+| Field | Values |
+|---|---|
+| `status` | `ok` when `claude` is found and the self-test hasn't failed, otherwise `degraded`. |
+| `claude` | `found` or `not_found`. |
+| `self_test` | `pending` (not run, not finished, or couldn't finish), `passed` or `failed`. The per-call check in [Start-up and shutdown](#start-up-and-shutdown) can also move it from `pending` to `passed` or `failed`. |
+
+It never shows paths, run counts or versions. Those are in the journal.
 
 The bridge keeps no metrics. If cost or latency needs tracking later, the
 per-run log lines already carry durations.
@@ -390,6 +422,7 @@ The integration scenarios include everything ADR-0007's consequences list,
 and a restart that forces a replay:
 
 - results that arrive before their MCP call;
+- an MCP call that arrives before the assistant message that announces it;
 - several results in one request;
 - a cancel during approval, followed by a new turn;
 - the idle timer.
@@ -398,9 +431,9 @@ They also cover an MCP call held open past 30 seconds,
 checking that progress messages go out.
 
 The fixtures come from the spike in
-[`implementation-plan.md`](implementation-plan.md): real requests from Con 0.1.0-beta.135 and real `stream-json` output from Claude
-Code. When either changes its format, recording new fixtures is the first
-step.
+[`implementation-plan.md`](implementation-plan.md): real requests from Con
+0.1.0-beta.135 and real `stream-json` output from Claude Code. When either
+changes its format, recording new fixtures is the first step.
 
 ## Decisions
 
@@ -441,6 +474,9 @@ answers these by recording real requests from Con, then updates this document.
 5. Whether tab-label requests on the quick path return bare JSON (ADR-0005).
 6. How much prompt caching saves when each turn starts a new run, given that
    Con's system prompt changes every turn (ADR-0003).
+7. What Con does with an error chunk at the end of a stream, as sent at
+   shutdown, and with a stream that closes normally without one. Neither
+   should trigger Con's retry, but this project hasn't checked.
 
 ## Glossary
 

@@ -23,7 +23,7 @@ starts only when every step it depends on has merged.
 | 5. Run lifecycle | Limits, timers, replay, errors and the self-test | 4 |
 | 6. Service and first release | A systemd unit and a semantic-release tag | 5, and a license |
 | 7. AUR package | `con-claude-bridge` in the Arch User Repository (AUR) | 6 |
-| 8. Setup guide | A README a new user can follow | 6 |
+| 8. Setup guide | A README a new user can follow | 7 |
 
 ## 1. Record real traffic
 
@@ -41,11 +41,16 @@ It merges:
 
 ## 2. Project skeleton
 
-`pyproject.toml`, the `src/con_claude_bridge/` package, and the modules that
-don't need `claude`: `cli.py`, `config.py`, `auth.py`, `log.py`, and
-`server.py` with `/healthz` and `/v1/models`. `con-claude-bridge setup` works.
-Chat requests get 501 until step 3. Also a CI workflow that runs `pytest`,
-`ruff` and `mypy --strict` on every PR.
+`pyproject.toml`, the `src/con_claude_bridge/` package, and the parts that
+don't start `claude`:
+
+- `cli.py`, `config.py`, `auth.py` and `log.py`;
+- `errors.py`, with the statuses used so far;
+- the `claude` lookup in `claude_runner.py`;
+- `server.py`, with `/healthz` and `/v1/models`.
+
+`con-claude-bridge setup` works. Chat requests get 501 until step 3. A CI
+workflow runs `pytest`, `ruff` and `mypy --strict` on every PR.
 
 Done when an integration test starts the server on a free port and the token,
 `Host` and content-type checks from
@@ -76,9 +81,15 @@ must also work by hand.
 
 ## 5. Run lifecycle
 
-The rest of [ADR-0007](adr/0007-run-lifecycle.md): the idle reaper, eviction
-of the oldest `waiting` run, the `desynced` state, replay, `errors.py` with
-the retry-word test, progress messages, and `selftest.py`.
+The rest of [ADR-0007](adr/0007-run-lifecycle.md) and of the start-up and
+shutdown design:
+
+- the idle reaper and eviction of the oldest `waiting` run;
+- the `desynced` state and replay;
+- the rest of `errors.py`, with the retry-word test;
+- progress messages during MCP calls;
+- the clean stream ending at shutdown;
+- `selftest.py` and the per-call `toolUseId` check.
 
 Done when every state change in ADR-0007's table and every row of the failure
 table in [`architecture.md`](architecture.md#what-happens-when-things-fail)
