@@ -33,14 +33,16 @@ them, and sends the next request with each result tagged by its
    `--allowedTools mcp__con` lets Claude Code call them without asking, since
    Con does the asking. The bridge strips the `mcp__con__` prefix from tool
    names on the way to Con and adds it back on the way in.
-2. A tool call ends the HTTP response but not the run. When Claude's complete
-   assistant message arrives in `stream-json`, the bridge sends Con every
-   `tool_use` block in it as `tool_calls`, using Claude's `tool_use` ID as the
-   call ID, with `finish_reason = "tool_calls"`. Then it closes the response.
-   Claude Code's MCP calls carry the same ID in
+2. A tool call ends the HTTP response but not the run. When Claude's message
+   ends, at its `message_stop` event in `stream-json`, the bridge sends Con
+   every `tool_use` block of that message as `tool_calls`. Claude Code prints
+   one `assistant` event per content block, so the bridge collects the blocks
+   from every `assistant` event with the message's ID. It sends them using
+   Claude's `tool_use` ID as the call ID, with `finish_reason = "tool_calls"`.
+   Then it closes the response. Claude Code's MCP calls carry the same ID in
    `_meta["claudecode/toolUseId"]`. Those calls stay open and the `claude`
-   process waits. [ADR-0007](0007-run-lifecycle.md) defines the run's states
-   and how the bridge pairs results with calls.
+   process waits. [ADR-0007](0007-run-lifecycle.md) defines the run's states and
+   how the bridge pairs results with calls.
 3. Con's next request carries the result. It contains a `tool` message with
    `tool_call_id = <toolUseId>`. The bridge finds the waiting call by that ID
    and returns Con's result, unchanged, as the MCP result. A denial goes
@@ -57,7 +59,8 @@ them, and sends the next request with each result tagged by its
    MCP call as a Server-Sent Events (SSE) stream and sends a
    `notifications/progress` message every 30 seconds, using the call's
    `progressToken`. It sends the stream's headers at once, because Claude
-   Code gives up after 60 seconds without them. It also sets a per-server
+   Code gives up after 60 seconds without them when no per-server timeout is
+   set. It also sets a per-server
    `"timeout": 900000` (15 minutes) in the `--mcp-config` it passes. Tests on
    2026-10-16 showed that progress messages alone, and the timeout alone, each
    kept a call alive for 330 seconds.
@@ -78,12 +81,24 @@ them, and sends the next request with each result tagged by its
 
    A test on 2026-10-16 showed that `--setting-sources ""` loads no
    `CLAUDE.md` at all, the project's included. So the bridge adds the
-   project's files itself. It reads `CLAUDE.md`, `.claude/CLAUDE.md` and
-   `CLAUDE.local.md` from the run's working directory and each directory above
-   it. It stops below the user's home directory, so nothing in `~` or
-   `~/.claude` loads. It adds them, outermost first, to the appended
-   system prompt, which reaches `claude` as a file through
-   `--append-system-prompt-file`.
+   project's files itself. It resolves the run's working directory to its
+   real path, then reads `CLAUDE.md`, `.claude/CLAUDE.md` and
+   `CLAUDE.local.md` from it and from each directory above it:
+
+   - Inside the home directory, it stops below the home directory itself, and
+     it never reads anything in `~/.claude`, so the global file never loads.
+   - Outside the home directory, it stops below `/`.
+   - It reads only regular files, never symlinks, devices or pipes, and at
+     most 64 KiB per file and 256 KiB in all. Anything larger is cut, with a
+     note in the journal.
+   - It doesn't expand `@path` imports in those files.
+
+   It adds the files, outermost first, to the appended system prompt, which
+   reaches `claude` as a file through `--append-system-prompt-file`. The file
+   names and their order follow Claude Code's documented behaviour; the test
+   on 2026-10-16 covered only `CLAUDE.md`. These files come from whatever
+   project the pane is in, which may be a freshly cloned repository, so
+   their text is untrusted ([ADR-0006](0006-localhost-service-with-token.md)).
 
    The same appended prompt starts with a short note from the bridge, because
    Con's prompt and tool results name tools without the `mcp__con__` prefix:
@@ -92,7 +107,9 @@ them, and sends the next request with each result tagged by its
    > such as `terminal_exec`. Here each Con tool is `mcp__con__<name>`, so
    > `terminal_exec` means `mcp__con__terminal_exec`, and a `suggested_tool`
    > in a result means the same. Names such as `exec_visible_shell` or
-   > `query_tmux` are pane capabilities that `list_panes` reports, not tools.
+   > `query_tmux` are pane capabilities that `list_panes` reports. A name
+   > that also appears in your tool list, such as `probe_shell_context`, is a
+   > tool as well.
    > Use only Con's tools: Con runs every action.
 8. The run starts in the focused pane's directory, which the bridge reads from
    the `<terminal_context>` block of Con's system prompt. If that isn't an

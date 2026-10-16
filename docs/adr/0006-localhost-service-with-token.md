@@ -2,7 +2,7 @@
 
 **Status:** Accepted, 2026-10-16. Amended for issue #3: how the bridge finds
 `claude`. Amended for issue #5: where settings live, `setup` creating the
-token, and what `/healthz` shows.
+token, what `/healthz` shows, and untrusted project instructions.
 
 ## Context
 
@@ -11,6 +11,12 @@ That includes other local processes, and also web pages, because a browser will
 send requests to `127.0.0.1`. A plain `text/plain` `POST` request skips the
 browser's cross-origin (CORS) preflight check, and DNS rebinding lets a remote
 page pose as `localhost`.
+
+Some input is untrusted even when it comes through Con: the project's
+`CLAUDE.md` files, which the bridge adds to the system prompt
+([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md), point 7), and
+the output of tools. Either can try to steer Claude. The safeguard is Con's
+approval prompt, which `con.agent.auto_approve_tools = true` turns off.
 
 ## Decision
 

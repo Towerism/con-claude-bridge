@@ -4,9 +4,9 @@
 #1. That review found that abandoned runs could block new turns, that some run
 behaviour was undefined, and that Con's retries could propose approved tools a
 second time. [`docs/REVIEW-NOTE.md`](../REVIEW-NOTE.md) lists the findings.
-Amended for issue #5: the error row for a bridge that can't start runs at
-all, Claude Code's heartbeat events, Con's full list of retry trigger words,
-and the error chunk.
+Amended for issue #5: the error row for a bridge that can't start runs at all,
+when a message ends and which events count in `waiting`, Con's full list of
+retry trigger words, and the error chunk.
 
 ## Context
 
@@ -44,16 +44,19 @@ Each run is in exactly one state:
 
 | State | Meaning | Leaves when |
 |---|---|---|
-| `streaming` | An HTTP response from Con is open, and Claude's output goes to it. | Claude's assistant message has `tool_use` blocks → `waiting`. Claude finishes → `done`. Con disconnects → `dead`. |
-| `waiting` | Tool calls went to Con, and no response is open. | A request brings results for this run → `streaming`. The idle timer fires → `dead`. Claude emits anything other than a `tool_progress` heartbeat, or an MCP call ends on Claude's side → `desynced`. Claude Code prints a heartbeat every 30 seconds while an MCP call is open, so heartbeats don't count. |
+| `streaming` | An HTTP response from Con is open, and Claude's output goes to it. | Claude's message ends (`message_stop`) with `tool_use` blocks → `waiting`. Claude finishes → `done`. Con disconnects → `dead`. |
+| `waiting` | Tool calls went to Con, and no response is open. | A request brings results for this run → `streaming`. The idle timer fires → `dead`. Claude starts a new message (`message_start`, or an `assistant` event with a new message ID), a `result` event arrives, or an MCP call ends on Claude's side → `desynced`. Other events don't count: the ended message's closing stream events, `rate_limit_event`, `system` events and the `tool_progress` heartbeats Claude Code prints every 30 seconds while an MCP call is open. |
 | `desynced` | Claude moved on without Con's results, after an MCP timeout or a crash. | At once → `dead`, with its IDs marked stale. |
 | `done` / `dead` | The bridge has killed the process group and removed the run from its registry. | — |
 
 ### Mailboxes
 
-The bridge closes Con's response when Claude's complete assistant message
-arrives in `stream-json`, not when the first MCP call arrives. At that point it
-opens one mailbox per `tool_use` ID.
+The bridge closes Con's response when Claude's message ends, at its
+`message_stop` event in `stream-json`, not when the first MCP call arrives. The
+message's `tool_use` blocks come in separate `assistant` events with the same
+message ID, and the bridge sends them all to Con. Each `tool_use` ID has one
+mailbox, opened by whichever comes first: its `assistant` event or Claude's
+MCP call for it.
 
 A request with results puts every `tool` message after the last assistant
 `tool_calls` message into those mailboxes. A result may arrive before or after
@@ -98,10 +101,13 @@ data: [DONE]
 ```
 
 Con shows the JSON as it is, so the same wording rules apply as for a status
-code and body. A message that must not cause a retry contains none of the
+code and body. A response that must not cause a retry contains none of the
 trigger words above, and none of the phrases Con rewrites: `MaxTurnError`,
-`max turn`, `tool use` and `tool_use`. When such a message quotes Claude
-Code's own error text, the bridge rewrites any of those words in the quote.
+`max turn`, `tool use` and `tool_use`. The bridge checks the final bytes of
+the body or chunk as well as the message, and puts no IDs or numbers in them,
+since a run ID can contain `500`. A message may quote Claude Code's own
+error text. If the finished bytes contain a trigger word or rewrite phrase,
+the bridge drops the quote and sends its fixed message alone.
 
 ## Consequences
 

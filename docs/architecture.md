@@ -85,13 +85,14 @@ flowchart LR
     Claude -- "MCP over HTTP + per-run token" --> Bridge
     Claude -- "model calls with the user's login" --> API
     Con -- "runs approved tools in panes" --> Files
-    Claude -. "reads the project's CLAUDE.md only" .-> Files
+    Bridge -. "reads the project's CLAUDE.md files" .-> Files
     Other -. "rejected: no token, wrong Host<br/>or content type" .-> Bridge
     style trusted stroke-dasharray: 5 5
 ```
 
-Claude Code never writes to the project itself. Every change to the files goes
-through a Con tool call that the user approved.
+Claude Code never reads or writes the project itself. Every change to the
+files goes through a Con tool call that the user approved, and the bridge
+reads only the project's `CLAUDE.md` files, as ADR-0002 point 7 describes.
 
 ## How one turn works
 
@@ -135,6 +136,7 @@ commit `de2d7c7`, 2026-10-16), with version `0.1.0-beta.135` installed:
 | Pressing stop only makes Con stop reading the stream. Con sends the bridge nothing when a turn ends early. | `consume_stream` in `provider.rs`; `hook.rs:207` |
 | Con retries a whole turn, up to 3 more times, when the error text contains any of `429`, `500`, `502`, `503`, `rate_limit`, `Rate limit`, `Internal Server Error`, `Bad Gateway`, `Service Unavailable`, `overloaded`, `timed out`, `connection reset` or `Connection reset`. These are plain substrings, so `15003` matches too. | `is_transient_error`, `crates/con-core/src/harness.rs:1510-1520` |
 | The error text Con checks is built from the whole response. A non-200 status before streaming gives `Invalid status code 409 Conflict with message: <body>`, so it holds the status number, its reason and the raw body. An SSE data line whose JSON has an `error` object and no `choices` key ends the stream with an error that quotes the raw JSON. | rig-core 0.40.0, `http_client/mod.rs:20-21, 257-258`, `providers/internal/openai_chat_completions_compatible.rs:23-42` |
+| A connection error quotes the request URL, port included: `error sending request for url (http://127.0.0.1:<port>/v1/chat/completions)`. | rig-core 0.40.0, `http_client/mod.rs:256` |
 | Con also rewrites some error text. `MaxTurnError` or `max turn` turns the error into a successful "reached the turn limit" reply, and `tool use` or `tool_use` becomes "This model does not support tool use". | `consume_stream`, `provider.rs:3045-3057` |
 | A stream that closes cleanly counts as a complete, successful reply, with or without `finish_reason` or `data: [DONE]`. Con waits for the body to end before it finishes the turn. | rig-core 0.40.0, `sse.rs:298`; `provider.rs:3029-3034` |
 | Across turns, Con sends its last 20 messages with system and tool messages removed, so only user and assistant text remains. | `Conversation::to_rig_history` in `crates/con-agent/src/conversation.rs` |
@@ -149,8 +151,9 @@ and a test MCP server written for the purpose:
 |---|---|
 | `claude -p --tools "" --strict-mcp-config --mcp-config <http server>` sees only that server's tools and calls them with no built-in tools. | The init event listed only `mcp__con__terminal_exec`. |
 | Each MCP `tools/call` carries `_meta["claudecode/toolUseId"]`, matching the `tool_use` block's ID, and a `progressToken`. | Server log: `"_meta":{"claudecode/toolUseId":"toolu_016V…","progressToken":2}` |
-| An MCP call fails after 60 s if the server hasn't sent response headers, and after 300 s with no response or progress. A `notifications/progress` message every 30 s kept a call alive for 330 s, and so did a per-server `"timeout": 900000` on its own. | Failures at 60 s (`TimeoutError`) and 300 s ("sent no response or progress for 300s; aborting"); both fixes returned the result at 330 s. |
+| Without a per-server `timeout`, an MCP call fails after 60 s if the server hasn't sent response headers, and after 300 s with no response or progress. A `notifications/progress` message every 30 s kept a call alive for 330 s, and so did a per-server `"timeout": 900000` on its own. | Failures at 60 s (`TimeoutError`) and 300 s ("sent no response or progress for 300s; aborting"); both fixes returned the result at 330 s. |
 | While an MCP call is open, `stream-json` carries a `tool_progress` heartbeat event every 30 s, whatever the server sends. | `{"type":"tool_progress",…,"heartbeat":true}` in every long run |
+| Claude Code prints one `assistant` event per content block, all with the same `message.id`, and each comes before that block's `content_block_stop`. The message ends with `message_delta`, carrying `stop_reason`, then `message_stop`, then a `rate_limit_event`. Only after those do the heartbeats start. | Event order in the 330 s progress run: `assistant` (tool_use), `content_block_stop`, `message_delta`, `message_stop`, `rate_limit_event`, 10 × `tool_progress` |
 | With `--tools ""`, tool search is off, so all 30 test tools loaded in full and Claude called one directly. `ENABLE_TOOL_SEARCH=false` changed nothing. | Debug log: "Tool search disabled: ToolSearchTool is not available" |
 | `--setting-sources ""` loads no `CLAUDE.md` at all, neither `~/.claude/CLAUDE.md` nor the project's. The default sources load both. | A canary in the project's `CLAUDE.md` and a heading in the global one, asked about with each setting |
 | Changing any part of the appended system prompt re-caches all of it: about 55% of a turn's input came from cache. With a fixed appended prompt and the changing context in the user message, 95% did. | `cache_read_input_tokens` against `cache_creation_input_tokens` in the `result` events |
@@ -163,14 +166,14 @@ each do one job. Every behaviour named in the ADRs has exactly one owner here.
 | Module | Owns |
 |---|---|
 | `cli.py` | The `con-claude-bridge` entry point. With no subcommand it serves: it runs the start-up sequence below, using `claude_runner.py` to find `claude`, and then the HTTP server. `con-claude-bridge setup` creates the token if it is missing, prints the `con.conf` lines to paste and sets `~/.config/con/con.conf` to mode `0600` ([ADR-0006](adr/0006-localhost-service-with-token.md)). `__main__.py` calls it, so `python -m con_claude_bridge` works too. |
-| `server.py` | HTTP routes: `/v1/models`, `/v1/chat/completions`, `/mcp/<run-id>` and `/healthz`. Streams Server-Sent Events (SSE) responses to Con and to `claude`, with `Connection: close`, so closing the socket ends the body and Con finishes the turn. Sends an MCP call's response headers at once, before Claude Code's 60-second header timeout. While an MCP `tools/call` waits for its result, the handler sends a progress message every 30 seconds ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md), point 5). Detects a client that has gone away. |
+| `server.py` | HTTP routes: `/v1/models`, `/v1/chat/completions`, `/mcp/<run-id>` and `/healthz`. Streams Server-Sent Events (SSE) responses to Con and to `claude`, using HTTP/1.1 chunked encoding and `Connection: close`. The final empty chunk marks a complete reply, and Con finishes the turn when the socket closes. If the bridge dies mid-stream, the missing final chunk makes Con report an error, without a retry trigger word, instead of taking the cut-off reply as complete. Sends an MCP call's response headers at once, before Claude Code's 60-second header timeout. While an MCP `tools/call` waits for its result, the handler sends a progress message every 30 seconds ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md), point 5). Detects a client that has gone away. |
 | `auth.py` | Creates and reads the bearer token file, compares tokens in constant time with `hmac.compare_digest`, checks the `Host` header and content type, and issues each run's MCP token (ADR-0006). |
 | `openai_protocol.py` | Parses Chat Completions requests and builds response chunks, including `tool_calls` and `reasoning_content`. No I/O. |
 | `mcp_protocol.py` | The small part of MCP the bridge serves: `initialize`, `tools/list`, `tools/call` and `notifications/progress`. Converts Con's tool definitions to MCP tools, and adds or strips the `mcp__con__` prefix. No I/O. |
 | `routing.py` | Decides what a request is: a `quick` request, results for a `waiting` run, a replay, or a new agent run ([ADR-0005](adr/0005-separate-quick-path-for-suggestions.md), [ADR-0003](adr/0003-con-history-is-the-source-of-truth.md)). Marks inline-suggestion requests, whose replies get cleaned up. Takes the parsed request and a lookup from the registry, and returns the decision. No I/O. |
 | `runs.py` | The registry of live runs and their state machine ([ADR-0007](adr/0007-run-lifecycle.md)): states, result mailboxes, the agent and quick limits, eviction of the oldest `waiting` run, and the idle reaper. It checks every MCP call for `_meta["claudecode/toolUseId"]`, and holds the self-test status that `/healthz` reports and that decides whether agent requests are refused. Each run owns its `claude` process, its MCP token and its temp files. |
-| `prompting.py` | Builds the two texts a run gets ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md), point 7). The appended system prompt holds the bridge's tool-name note, Con's system prompt without its `<terminal_context>` block, and the project's `CLAUDE.md` files. The prompt starts with that `<terminal_context>` block, then Con's history as a transcript, adding this turn's tool calls and results when replaying. Reads the pane's working directory from the same block. No I/O apart from reading `CLAUDE.md` files. |
-| `claude_runner.py` | Finds the `claude` binary (ADR-0006) before each run, builds its command line, and starts it in its own process group. Writes the prompt to its standard input, and passes the system prompt and the `--mcp-config` as mode `0600` temp files, never as arguments: an argument is limited to 128 KiB, and any local user can read it in `/proc/<pid>/cmdline`. Parses `stream-json` events from its output, drains its standard error, and kills the group on cancel. Knows nothing about HTTP or Con. |
+| `prompting.py` | Builds the two texts a run gets ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md), point 7). The appended system prompt holds the bridge's tool-name note, Con's system prompt without its `<terminal_context>` block, and the project's `CLAUDE.md` files. The prompt starts with that `<terminal_context>` block, then Con's history as a transcript, adding this turn's tool calls and results when replaying. Reads the pane's working directory from the same block. Gets the `CLAUDE.md` text from `claude_runner.py` by way of `runs.py`. No I/O. |
+| `claude_runner.py` | Finds the `claude` binary (ADR-0006) before each run, builds its command line, and starts it in its own process group. Writes the prompt to its standard input, and passes the system prompt and the `--mcp-config` as mode `0600` temp files, never as arguments: an argument is limited to 128 KiB, and any local user can read it in `/proc/<pid>/cmdline`. Parses `stream-json` events from its output, drains its standard error, and kills the group on cancel. Finds and reads the project's `CLAUDE.md` files, with ADR-0002's limits. Knows nothing about HTTP or Con. |
 | `selftest.py` | Runs the start-up self-test for `_meta["claudecode/toolUseId"]` ([ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md)) and records its result in the registry. [Start-up and shutdown](#start-up-and-shutdown) describes it. |
 | `errors.py` | Maps each failure to the HTTP status and message in ADR-0007's error table, builds the error chunk that ends a stream, and removes Con's retry trigger words and rewrite phrases from any message that must not cause a retry, including Claude Code error text quoted in it. No I/O. |
 | `config.py` | Reads settings from environment variables and `config.toml`. Environment variables win. [`configuration.md`](configuration.md) lists them. |
@@ -231,8 +234,9 @@ docs/                          this document, the ADRs and the companion pages
    `waiting` state, the bridge puts every one of them in that run's mailboxes
    and streams what Claude does next. ADR-0007 covers results that arrive
    before Claude's matching MCP call.
-4. Otherwise it starts a new run. The prompt is Con's history plus anything
-   from this turn, and the MCP server lists the tools from this request.
+4. Otherwise it starts a new run. The prompt is Con's terminal context, then
+   Con's history as a transcript with anything from this turn, then the new
+   message. The MCP server lists the tools from this request.
 5. The response ends with `finish_reason = "tool_calls"` when Claude's
    assistant message has tool calls, or `"stop"` when its turn ends, and on
    `"stop"` the process exits. The bridge chooses error codes and wording so
@@ -357,7 +361,7 @@ the machine.
 
 | Failure | What the user sees | What the bridge does |
 |---|---|---|
-| `config.toml` isn't valid | The unit shows as failed | Logs the problem and exits with status 1. |
+| `config.toml` isn't valid, or the port contains `429`, `500`, `502` or `503` | The unit shows as failed | Logs the problem and exits with status 1. |
 | `claude` isn't found | Con shows an error saying `claude` wasn't found. `/healthz` shows `"claude": "not_found"`. | Answers each chat request with 503 and runs no self-test. Nothing has run, so Con's retries are safe. The journal lists the paths checked. |
 | Claude Code isn't logged in, or its API is rate-limited or down, before any output | Con retries, then shows Claude Code's error | 429 or 503 with Claude Code's error text: the `result` event's text, or the last line of standard error if `claude` exits without one (ADR-0007). |
 | The user presses stop while Claude is streaming | Nothing more | Con disconnects, so the run is `dead` and killed at once (ADR-0007). |
@@ -434,6 +438,8 @@ and a restart that forces a replay:
 - results that arrive before their MCP call;
 - an MCP call that arrives before the assistant message that announces it;
 - several results in one request;
+- one assistant message with two `tool_use` blocks, and one with thinking
+  before its `tool_use`;
 - a cancel during approval, followed by a new turn;
 - the idle timer.
 

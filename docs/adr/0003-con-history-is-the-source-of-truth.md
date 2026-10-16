@@ -28,7 +28,9 @@ run would lose its context without any error.
   [ADR-0007](0007-run-lifecycle.md)). The bridge issued those IDs itself, so a
   match is exact and a miss is certain.
 - The first step of a turn always starts a new run. Its prompt is Con's
-  history written as a transcript, followed by the new message. The bridge
+  terminal context, then Con's history written as a transcript, then the new
+  message ([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md),
+  point 7). The bridge
   doesn't resume an earlier Claude Code session, so Claude sees what Con has,
   the same as any other Con provider.
 - When a tool result's ID matches no live run, the bridge replays instead of
@@ -53,11 +55,14 @@ run would lose its context without any error.
 - Within a turn, Claude keeps its full context, thinking included, but between
   turns it gets only Con's 20-message text history, like any other provider.
 - Every new turn starts a `claude` process and resends the history. Prompt
-  caching still covers most of it, as long as the appended system prompt stays
-  the same from turn to turn. A test on 2026-10-16 found that a change
-  anywhere in it re-cached all of it. About 55% of the input then came from
-  cache, against 95% when the changing part went in the user message. Con's
-  `<terminal_context>` block changes every turn, so the bridge moves it from
-  the system prompt to the start of the prompt. It also keeps the tool list in
-  Con's order ([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md),
-  point 7).
+  caching covers the tool definitions and the system prompt from one turn to the
+  next, as long as the appended system prompt stays the same. The history itself
+  goes uncached on a turn's first call, because it follows the terminal context,
+  which changes every turn. A move to a directory with a different set of
+  `CLAUDE.md` files also re-caches the appended prompt. A test on 2026-10-16
+  found that a change anywhere in it re-cached all of it. About 55% of the input
+  then came from cache, against 95% when the changing part went in the user
+  message. Con's `<terminal_context>` block changes every turn, so the bridge
+  moves it from the system prompt to the start of the prompt. It also keeps the
+  tool list in Con's order
+  ([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md), point 7).

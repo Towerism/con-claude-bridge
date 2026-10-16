@@ -57,14 +57,17 @@ Inline-suggestion replies get cleaned, because Con shows them as typed ghost
 text. The bridge spots them by Con's system prompt for suggestions, "You are a
 shell command completion assistant", and before replying:
 
-- removes one pair of surrounding backticks, code fences or quotes;
-- keeps only the first line;
-- turns `empty`, `(empty)` or `""` into an empty reply, which Con reads as
-  no suggestion.
+- unwraps a reply that is a single line inside one pair of backticks or a
+  code fence;
+- turns any other reply with more than one line into an empty reply, as Con
+  itself would by dropping it;
+- turns `empty` or `(empty)` into an empty reply, which Con reads as no
+  suggestion.
 
-It keeps leading and inner spaces, which Con relies on. If Con changes that
-system prompt, replies stop being cleaned, and suggestions are no worse than
-without the bridge's help.
+It never removes quotes or spaces. Con's prompt asks the model to preserve
+them, and a suffix such as `"fix typo"` needs its quotes. If Con changes that
+system prompt, replies stop being cleaned and reach Con as they would from
+any other provider.
 
 ## Consequences
 
