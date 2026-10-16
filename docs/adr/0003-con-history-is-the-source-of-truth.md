@@ -1,7 +1,9 @@
 # ADR-0003: Con's history is the source of truth, and the bridge finds live runs by tool call ID
 
 **Status:** Accepted, 2026-10-16. Replaces the first draft, which hashed the
-history to map Con conversations to Claude Code sessions.
+history to map Con conversations to Claude Code sessions. Amended for issue
+#5: the measured prompt caching, and moving the terminal context out of the
+system prompt.
 
 ## Context
 
@@ -51,7 +53,11 @@ run would lose its context without any error.
 - Within a turn, Claude keeps its full context, thinking included, but between
   turns it gets only Con's 20-message text history, like any other provider.
 - Every new turn starts a `claude` process and resends the history. Prompt
-  caching may not cut that cost by much, because Con's system prompt carries
-  fresh terminal context and so changes on every turn. The first
-  implementation issue measures it, as open question 6 in
-  [the architecture document](../architecture.md#open-questions) says.
+  caching still covers most of it, as long as the appended system prompt stays
+  the same from turn to turn. A test on 2026-10-16 found that a change
+  anywhere in it re-cached all of it. About 55% of the input then came from
+  cache, against 95% when the changing part went in the user message. Con's
+  `<terminal_context>` block changes every turn, so the bridge moves it from
+  the system prompt to the start of the prompt. It also keeps the tool list in
+  Con's order ([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md),
+  point 7).

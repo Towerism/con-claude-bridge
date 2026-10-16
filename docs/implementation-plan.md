@@ -16,7 +16,7 @@ starts only when every step it depends on has merged.
 
 | Step | Delivers | Depends on |
 |---|---|---|
-| 1. Record real traffic | Fixtures and answers to the open questions | Nothing |
+| 1. Record real traffic | Fixtures for the tests | Nothing |
 | 2. Project skeleton | A service that starts, checks tokens and answers `/healthz` | 1 |
 | 3. Quick path | Working suggestions and tab labels | 2 |
 | 4. Agent path | A full Con turn with tool calls and approvals | 3 |
@@ -27,17 +27,18 @@ starts only when every step it depends on has merged.
 
 ## 1. Record real traffic
 
-A spike, so its code is thrown away and only its findings merge. A throwaway
+A spike, so its code is thrown away and only its recordings merge. A throwaway
 server records what Con 0.1.0-beta.135 sends. It also records Claude Code's
-`stream-json` output and its Model Context Protocol (MCP) tool calls. The
-turns to record have no tools, one tool call, two tool calls in one reply, a
-denial and a stop.
+`stream-json` output and its Model Context Protocol (MCP) tool calls. The turns
+to record have no tools, one tool call, two tool calls in one reply, a denial
+and a stop.
 
-It merges:
-
-- the recordings, as fixtures in `tests/fixtures/`, with the token removed;
-- answers to the six [open questions](architecture.md#open-questions),
-  written into `architecture.md` and any ADR they change.
+It merges the recordings, as fixtures in `tests/fixtures/`, with the token
+removed. The design questions this step was first meant to answer were
+settled on 2026-10-16, by reading Con's source and testing Claude Code, and
+the [facts tables](architecture.md#facts-the-design-depends-on) record the
+answers. If a recording contradicts one of those facts, the step updates the
+document and the ADR that relies on it.
 
 ## 2. Project skeleton
 

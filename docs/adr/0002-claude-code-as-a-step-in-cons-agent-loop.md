@@ -2,8 +2,9 @@
 
 **Status:** Accepted, 2026-10-16. Replaces the first draft, which ran
 `claude -p` once per request and let Claude Code use its own tools. Amended
-for issue #5: the `agent_model` setting, and what happens when the self-test
-can't finish.
+for issue #5: the `agent_model` setting, what happens when the self-test
+can't finish, and the answers to the questions this ADR left open, tested on
+2026-10-16.
 
 ## Context
 
@@ -55,8 +56,11 @@ them, and sends the next request with each result tagged by its
    progress, and Con's approval can take that long. So the bridge answers each
    MCP call as a Server-Sent Events (SSE) stream and sends a
    `notifications/progress` message every 30 seconds, using the call's
-   `progressToken`. It also sets a per-server `timeout` in the `--mcp-config`
-   it passes.
+   `progressToken`. It sends the stream's headers at once, because Claude
+   Code gives up after 60 seconds without them. It also sets a per-server
+   `"timeout": 900000` (15 minutes) in the `--mcp-config` it passes. Tests on
+   2026-10-16 showed that progress messages alone, and the timeout alone, each
+   kept a call alive for 330 seconds.
 6. Text and thinking stream as they arrive. With `--include-partial-messages`,
    Claude's text deltas become `content` deltas, and its thinking deltas become
    `reasoning_content` deltas, which Con shows as thinking.
@@ -72,10 +76,24 @@ them, and sends the next request with each result tagged by its
    skills, and it would steer Con's agent. A `CLAUDE.md` in the project's
    working directory does apply.
 
-   This project hasn't yet checked whether `--setting-sources` also decides
-   which `CLAUDE.md` files load, so the first implementation issue tests it. If
-   it doesn't, the bridge passes `--system-prompt-file` and adds the project's
-   file itself.
+   A test on 2026-10-16 showed that `--setting-sources ""` loads no
+   `CLAUDE.md` at all, the project's included. So the bridge adds the
+   project's files itself. It reads `CLAUDE.md`, `.claude/CLAUDE.md` and
+   `CLAUDE.local.md` from the run's working directory and each directory above
+   it. It stops below the user's home directory, so nothing in `~` or
+   `~/.claude` loads. It adds them, outermost first, to the appended
+   system prompt, which reaches `claude` as a file through
+   `--append-system-prompt-file`.
+
+   The same appended prompt starts with a short note from the bridge, because
+   Con's prompt and tool results name tools without the `mcp__con__` prefix:
+
+   > Con's instructions and tool results name its tools without a prefix,
+   > such as `terminal_exec`. Here each Con tool is `mcp__con__<name>`, so
+   > `terminal_exec` means `mcp__con__terminal_exec`, and a `suggested_tool`
+   > in a result means the same. Names such as `exec_visible_shell` or
+   > `query_tmux` are pane capabilities that `list_panes` reports, not tools.
+   > Use only Con's tools: Con runs every action.
 8. The run starts in the focused pane's directory, which the bridge reads from
    the `<terminal_context>` block of Con's system prompt. If that isn't an
    existing directory, the run starts in `$HOME`.
@@ -92,17 +110,18 @@ them, and sends the next request with each result tagged by its
 
 - Con shows every action, asks for approval and runs it in its panes, as it
   does for any provider.
-- From Claude Code, Con gets the login, the model and the project's
-  `CLAUDE.md`. Claude Code's built-in tools, skills, hooks and plugins don't
-  run. Con's own skills still apply.
+- From Claude Code, Con gets the login and the model. The project's `CLAUDE.md`
+  still applies, because the bridge adds it. Claude Code's built-in tools,
+  skills, hooks and plugins don't run. Con's own skills still apply.
 - A `claude` process stays alive between HTTP requests for the length of one
   Con turn. Con doesn't tell the bridge when a turn ends early, so ADR-0007's
   6-minute idle timer kills abandoned runs. If the run is gone when results
   arrive, for example after the bridge restarts, the replay in
   [ADR-0003](0003-con-history-is-the-source-of-truth.md) takes over.
-- With many MCP tools, Claude Code may hide them behind its tool search. Con
-  registers about 30 tools, so the first implementation issue checks for this
-  and sets `ENABLE_TOOL_SEARCH=false` if needed.
+- Claude Code's tool search stays off, because `--tools ""` removes the tool
+  it needs, so all of Con's tools are visible from the start. The bridge also
+  sets `ENABLE_TOOL_SEARCH=false`, in case a later Claude Code release changes
+  that.
 - Each tool step depends on the `_meta["claudecode/toolUseId"]` field. The
   bridge runs a self-test for it at start-up. If the field is missing, it
   refuses agent requests instead of guessing which call a result belongs to.

@@ -5,7 +5,8 @@
 behaviour was undefined, and that Con's retries could propose approved tools a
 second time. [`docs/REVIEW-NOTE.md`](../REVIEW-NOTE.md) lists the findings.
 Amended for issue #5: the error row for a bridge that can't start runs at
-all.
+all, Claude Code's heartbeat events, Con's full list of retry trigger words,
+and the error chunk.
 
 ## Context
 
@@ -26,8 +27,12 @@ request. Claude Code may make its Model Context Protocol (MCP) tool calls after
 Con's results have already arrived, for example when a user hook slows it down.
 
 Con retries a whole turn, up to 3 more times, when an error message contains
-`429`, `500`, `502`, `503`, `timed out` or `connection reset`
-(`is_transient_error` in `crates/con-core/src/harness.rs`). A retry starts again
+any of `429`, `500`, `502`, `503`, `rate_limit`, `Rate limit`,
+`Internal Server Error`, `Bad Gateway`, `Service Unavailable`,
+`overloaded`, `timed out`, `connection reset` or `Connection reset`
+(`is_transient_error` in `crates/con-core/src/harness.rs`). They match as
+plain substrings anywhere in the text, which includes the status code, the
+response body and, for connection errors, the URL. A retry starts again
 from the turn's first request, so Con would propose a tool call the user had
 already approved a second time.
 
@@ -40,7 +45,7 @@ Each run is in exactly one state:
 | State | Meaning | Leaves when |
 |---|---|---|
 | `streaming` | An HTTP response from Con is open, and Claude's output goes to it. | Claude's assistant message has `tool_use` blocks → `waiting`. Claude finishes → `done`. Con disconnects → `dead`. |
-| `waiting` | Tool calls went to Con, and no response is open. | A request brings results for this run → `streaming`. The idle timer fires → `dead`. Claude emits anything, or an MCP call ends on Claude's side → `desynced`. |
+| `waiting` | Tool calls went to Con, and no response is open. | A request brings results for this run → `streaming`. The idle timer fires → `dead`. Claude emits anything other than a `tool_progress` heartbeat, or an MCP call ends on Claude's side → `desynced`. Claude Code prints a heartbeat every 30 seconds while an MCP call is open, so heartbeats don't count. |
 | `desynced` | Claude moved on without Con's results, after an MCP timeout or a crash. | At once → `dead`, with its IDs marked stale. |
 | `done` / `dead` | The bridge has killed the process group and removed the run from its registry. | — |
 
@@ -81,6 +86,22 @@ replays the turn ([ADR-0003](0003-con-history-is-the-source-of-truth.md)).
 | Bad request: schema, auth or `Host` | 400, 401 or 403 | Retrying can't help. |
 
 Any error response kills the run it belongs to.
+
+Once a stream has started, an error goes to Con as one Server-Sent Events
+(SSE) data line. Its JSON has an `error` object and no `choices` key. Then
+come `data: [DONE]` and a normal close:
+
+```text
+data: {"error": {"message": "The Claude Code run ended unexpectedly. See the bridge's journal.", "type": "bridge_error"}}
+
+data: [DONE]
+```
+
+Con shows the JSON as it is, so the same wording rules apply as for a status
+code and body. A message that must not cause a retry contains none of the
+trigger words above, and none of the phrases Con rewrites: `MaxTurnError`,
+`max turn`, `tool use` and `tool_use`. When such a message quotes Claude
+Code's own error text, the bridge rewrites any of those words in the quote.
 
 ## Consequences
 

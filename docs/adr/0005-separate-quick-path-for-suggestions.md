@@ -1,7 +1,8 @@
 # ADR-0005: A separate, cheap path for suggestions and tab labels
 
 **Status:** Accepted, 2026-10-16. Amended for issue #5: the quick model is a
-setting, `quick_model`, with `haiku` as its default.
+setting, `quick_model`, with `haiku` as its default, and inline-suggestion
+replies are cleaned up.
 
 ## Context
 
@@ -45,10 +46,25 @@ runs don't hold the slots.
 [ADR-0007](0007-run-lifecycle.md) sets the limits. Past them, a quick request
 gets HTTP 429, which Con treats as "no suggestion".
 
-Tab-label requests ask for bare JSON. The quick path loads no settings and no
-`CLAUDE.md`, so nothing should wrap extra text around the JSON; the first
-implementation issue checks this. `--bare` would do the same job, but it
-refuses OAuth logins, which is how Claude Code is usually signed in.
+The quick path loads no settings and no `CLAUDE.md`. `--bare` would do the
+same job, but it refuses OAuth logins, which is how Claude Code is usually
+signed in.
+
+Con's source, read on 2026-10-16, decides how each reply is treated. Tab-label
+replies pass through unchanged, because Con takes the first JSON object with a
+`label` and an `icon` from the reply and ignores fences or prose around it.
+Inline-suggestion replies get cleaned, because Con shows them as typed ghost
+text. The bridge spots them by Con's system prompt for suggestions, "You are a
+shell command completion assistant", and before replying:
+
+- removes one pair of surrounding backticks, code fences or quotes;
+- keeps only the first line;
+- turns `empty`, `(empty)` or `""` into an empty reply, which Con reads as
+  no suggestion.
+
+It keeps leading and inner spaces, which Con relies on. If Con changes that
+system prompt, replies stop being cleaned, and suggestions are no worse than
+without the bridge's help.
 
 ## Consequences
 
