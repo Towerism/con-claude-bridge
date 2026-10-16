@@ -4,30 +4,32 @@
 
 ## Context
 
-The bridge is a small local service: one HTTP server, child processes, JSON and
-Server-Sent Events (SSE) streaming. It runs under systemd on this Arch Linux machine (Python 3.14.8). There is
-no `uv`, and system pip is externally managed.
+The bridge is a small local service. It runs one HTTP server, starts child
+processes, and streams JSON and Server-Sent Events (SSE). It runs under systemd
+on Arch Linux. On the development machine (Python 3.14.8 as of 2026-10-16)
+there is no `uv`, and system pip is externally managed.
 
 ## Decision
 
-- Runtime: Python 3.12 or later, standard library only. That means
-  `http.server.ThreadingHTTPServer`, `subprocess`, `json`, `secrets` and
-  `tomllib`. One thread per request is enough, because Con sends a few requests
-  at a time.
-- Development: `pytest` and `ruff` in a project venv (`.venv`), and `mypy
-  --strict` for type checking. The project is described in `pyproject.toml`.
-- Tests replace the real `claude` with a fake executable that prints recorded
-  `stream-json` events, so tests run offline and cost nothing.
+The service needs Python 3.12 or later and nothing outside the standard
+library: `http.server.ThreadingHTTPServer`, `subprocess`, `json`, `secrets`
+and `tomllib`. One thread per request is enough, because Con sends only a few
+requests at a time.
+
+Development tools live in a project venv (`.venv`): `pytest` for tests, `ruff`
+for linting and `mypy --strict` for type checking. `pyproject.toml` describes
+the project. Tests replace the real `claude` with a fake executable that prints
+recorded `stream-json` events, so they run offline and cost nothing.
 
 ## Options considered
 
 | Option | Why not chosen |
 |---|---|
-| FastAPI or aiohttp | Async and nicer routing, but adds dependencies the service needs at run time, and a venv the systemd unit depends on. Not needed for this load. |
-| Rust (to match Con) | A single binary, but more code for the same job, and slower to change. |
-| Node.js | Same trade-offs as Python, with no advantage here. |
+| FastAPI or aiohttp | Async and nicer routing, but the service would need dependencies at run time, and the systemd unit would depend on a venv. This load doesn't need them. |
+| Rust, to match Con | One binary, but more code for the same job and slower to change. |
+| Node.js | The same trade-offs as Python, with nothing gained. |
 
 ## Consequences
 
-- No dependencies to install or update for the service itself.
-- Revisit if the bridge needs many concurrent streams or WebSockets.
+- The service itself has no dependencies to install or update.
+- If the bridge ever needs many concurrent streams or WebSockets, revisit this.
