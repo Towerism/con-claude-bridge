@@ -89,7 +89,7 @@ Con.
 | `routing.py` | Picks `agent` or `quick` ([ADR-0005](adr/0005-separate-quick-path-for-suggestions.md)), and for `agent`, a new run or an existing one. |
 | `prompting.py` | Writes Con's history, and when replaying, this turn's tool calls and results, as the prompt for a new run. Passes Con's system prompt with `--append-system-prompt`, and reads the pane's working directory from its `<terminal_context>` block. |
 | `claude_runner.py` | Starts `claude -p` in its own process group, reads `stream-json` events, and kills the group on cancel. |
-| `config.py` | Settings from environment variables and an optional `config.toml`. |
+| `config.py` | Settings from environment variables and an optional `config.toml`, including where to find `claude` ([ADR-0006](adr/0006-localhost-service-with-token.md)). |
 
 ## Request handling
 
@@ -134,6 +134,8 @@ Nothing else persists. Runs use `--no-session-persistence`.
   user service with a bearer token.
 - [ADR-0007](adr/0007-run-lifecycle.md): run states, result mailboxes, limits
   and error mapping.
+- [ADR-0008](adr/0008-aur-release-package.md): ship the bridge as an AUR
+  release package, with the PKGBUILD kept in this repo.
 
 ## Open questions
 

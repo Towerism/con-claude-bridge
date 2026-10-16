@@ -30,6 +30,16 @@ DNS rebinding lets a remote page pose as `localhost`.
   `WantedBy=default.target`), so it runs as the user with their Claude Code
   login. Hardening: `NoNewPrivileges=yes`, `PrivateTmp=yes`. No filesystem
   sandboxing, because Claude Code needs the user's projects.
+  When installed from the Arch User Repository (AUR) package, the unit lives in
+  `/usr/lib/systemd/user/` instead ([ADR-0008](0008-aur-release-package.md)).
+- Find `claude` the same way on every install. A user service's `PATH`
+  doesn't include `~/.local/bin`. So the bridge checks, in order: the
+  `BRIDGE_CLAUDE_BIN` setting (an absolute path, from the environment or
+  `config.toml`, with the environment winning), then `~/.local/bin/claude`
+  (Anthropic's installer, which updates itself), then a lookup on `PATH`. It
+  logs the chosen path and `claude --version` at start-up. If nothing is found,
+  the log lists the paths it checked, and `/healthz` (which needs no token) says
+  only `claude not found`, so it never reveals the home directory.
 - Logs go to the journal. Prompts and replies aren't logged by default, only
   metadata: profile, run ID, state changes, duration and exit status.
 
