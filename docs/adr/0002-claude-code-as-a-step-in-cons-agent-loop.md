@@ -4,7 +4,8 @@
 `claude -p` once per request and let Claude Code use its own tools. Amended
 for issue #5: the `agent_model` setting, what happens when the self-test
 can't finish, and the answers to the questions this ADR left open, tested on
-2026-10-16.
+2026-10-16. The bridge reads the project's `CLAUDE.md` files itself, with
+limits, and has no settings file.
 
 ## Context
 
@@ -29,7 +30,8 @@ them, and sends the next request with each result tagged by its
    Model Context Protocol (MCP) server, which is how Claude Code takes tools
    from outside. The bridge serves that server itself at
    `http://127.0.0.1:<port>/mcp/<run-id>`. It lists exactly the tools in Con's
-   request, with the same names, descriptions and JSON schemas.
+   request, with the same names, descriptions and JSON schemas, in the order
+   Con sends them.
    `--allowedTools mcp__con` lets Claude Code call them without asking, since
    Con does the asking. The bridge strips the `mcp__con__` prefix from tool
    names on the way to Con and adds it back on the way in.
@@ -68,16 +70,17 @@ them, and sends the next request with each result tagged by its
    Claude's text deltas become `content` deltas, and its thinking deltas become
    `reasoning_content` deltas, which Con shows as thinking.
 7. Which Claude Code configuration loads. Agent runs use `--setting-sources ""`
-   and a settings file the bridge owns, so the user's hooks, plugins and
-   permission rules don't load. They would otherwise act on Con's tool calls
-   where Con can't see them. The user's choice of model doesn't load either, so
+   so the user's hooks, plugins and permission rules don't load. They would
+   otherwise act on Con's tool calls where Con can't see them. The bridge
+   passes everything it needs as flags, such as `--allowedTools mcp__con`, so it
+   has no settings file of its own. The user's choice of model doesn't load either, so
    the bridge's `agent_model` setting picks it, and Claude Code's default
    applies when that isn't set
    ([`configuration.md`](../configuration.md#bridge-settings)). The bridge also
-   aims to leave out the global `~/.claude/CLAUDE.md`. The user wrote it for
-   their own Claude Code sessions, with rules such as an issue pipeline and
-   skills, and it would steer Con's agent. A `CLAUDE.md` in the project's
-   working directory does apply.
+   leaves out the global `~/.claude/CLAUDE.md`. The user wrote it for their own
+   Claude Code sessions, with rules such as an issue pipeline and skills, and it
+   would steer Con's agent. A `CLAUDE.md` in the project's working directory
+   does apply.
 
    A test on 2026-10-16 showed that `--setting-sources ""` loads no
    `CLAUDE.md` at all, the project's included. So the bridge adds the
@@ -88,6 +91,12 @@ them, and sends the next request with each result tagged by its
    - Inside the home directory, it stops below the home directory itself, and
      it never reads anything in `~/.claude`, so the global file never loads.
    - Outside the home directory, it stops below `/`.
+   - It stops early at a directory that someone other than the user or root
+     owns, or that the group or others can write to, such as `/tmp`.
+   - It reads only files that the user or root owns and that the group and
+     others can't write to. Another user could otherwise steer Claude by
+     planting a `CLAUDE.md` in a shared directory. Skipped files go in the
+     journal.
    - It reads only regular files, never symlinks, devices or pipes, and at
      most 64 KiB per file and 256 KiB in all. Anything larger is cut, with a
      note in the journal.
@@ -113,7 +122,10 @@ them, and sends the next request with each result tagged by its
    > Use only Con's tools: Con runs every action.
 8. The run starts in the focused pane's directory, which the bridge reads from
    the `<terminal_context>` block of Con's system prompt. If that isn't an
-   existing directory, the run starts in `$HOME`.
+   existing directory, the run starts in `$HOME`. The unit has
+   `PrivateTmp=yes`, so the bridge can't see a pane's directory under `/tmp`
+   or `/var/tmp`. Such a run starts in `$HOME` without that project's
+   `CLAUDE.md`, and the journal says so.
 
 ## Options considered
 

@@ -4,9 +4,11 @@
 #1. That review found that abandoned runs could block new turns, that some run
 behaviour was undefined, and that Con's retries could propose approved tools a
 second time. [`docs/REVIEW-NOTE.md`](../REVIEW-NOTE.md) lists the findings.
-Amended for issue #5: the error row for a bridge that can't start runs at all,
-when a message ends and which events count in `waiting`, Con's full list of
-retry trigger words, and the error chunk.
+Amended for issue #5: the error rows for a bridge that can't start runs and
+for failures before Claude's first output, when a message ends and which
+events count in `waiting`, who opens a mailbox, stale IDs, Con's full list of
+retry trigger words, the error chunk, and the check on an error's final
+bytes.
 
 ## Context
 
@@ -24,7 +26,9 @@ ends early. A turn ends early when:
 
 Con runs a turn's tool calls one at a time and sends all their results in one
 request. Claude Code may make its Model Context Protocol (MCP) tool calls after
-Con's results have already arrived, for example when a user hook slows it down.
+Con's results have already arrived. That happens, for example, when Con
+auto-approves and runs a tool before Claude Code's MCP call reaches the
+bridge.
 
 Con retries a whole turn, up to 3 more times, when an error message contains
 any of `429`, `500`, `502`, `503`, `rate_limit`, `Rate limit`,
@@ -63,8 +67,12 @@ A request with results puts every `tool` message after the last assistant
 its MCP call; whichever comes second completes the pair.
 
 When a request's IDs belong to a `waiting` run, the request goes to that run
-and never counts as a miss. When they match no run, or a stale one, the bridge
-replays the turn ([ADR-0003](0003-con-history-is-the-source-of-truth.md)).
+and never counts as a miss. When they match no run, the bridge replays the
+turn ([ADR-0003](0003-con-history-is-the-source-of-truth.md)). That covers
+runs that ended through the idle timer, eviction or a restart. When they
+match a stale ID, from a run that became `desynced`, the bridge doesn't
+replay. It answers as the Errors table below says: 409, or 503 once Claude
+Code is known not to send `_meta["claudecode/toolUseId"]`.
 
 ### Limits and timers
 
@@ -83,12 +91,15 @@ replays the turn ([ADR-0003](0003-con-history-is-the-source-of-truth.md)).
 
 | Situation | Response | Why |
 |---|---|---|
-| Claude Code's own API is rate-limited or overloaded before any output | 429 or 503 | Nothing has run yet, so Con's retry is safe. |
-| The run is lost or desynced mid-turn, or the agent limit is reached | HTTP 409, with a message that contains none of Con's retry trigger words | A retry would propose already-approved tools again. |
+| A turn's first step fails before Claude's first output, for any reason: rate limits, an overloaded API, no login, a bad `agent_model` | 503 | The request carries no `tool` messages, so no tool has been proposed in this turn and Con's retry is safe. |
+| A later step, or a replay, fails before Claude's first output | 409, with a message that contains none of Con's retry trigger words | Con has already proposed tools in this turn, and a retry would propose approved ones again. |
+| A request's IDs are stale because their run became `desynced`, or the agent limit is reached | HTTP 409, with a message that contains none of Con's retry trigger words | A retry would propose already-approved tools again. |
 | The bridge can't start runs at all: `claude` isn't found, or the self-test or an MCP call showed that Claude Code no longer sends `_meta["claudecode/toolUseId"]`. This includes Con's next step for a run killed on that discovery. | 503, with a message that says which, and points to the journal | Nothing runs, and every retry is refused the same way, so Con's retries are harmless. |
 | Bad request: schema, auth or `Host` | 400, 401 or 403 | Retrying can't help. |
 
-Any error response kills the run it belongs to.
+Any error response kills the run it belongs to. To leave room for a status
+code, the bridge sends the `200` status line only when Claude's first output
+event arrives. After that, an error can go to Con only as an error chunk.
 
 Once a stream has started, an error goes to Con as one Server-Sent Events
 (SSE) data line. Its JSON has an `error` object and no `choices` key. Then
@@ -104,8 +115,8 @@ Con shows the JSON as it is, so the same wording rules apply as for a status
 code and body. A response that must not cause a retry contains none of the
 trigger words above, and none of the phrases Con rewrites: `MaxTurnError`,
 `max turn`, `tool use` and `tool_use`. The bridge checks the final bytes of
-the body or chunk as well as the message, and puts no IDs or numbers in them,
-since a run ID can contain `500`. A message may quote Claude Code's own
+the whole body or chunk, not only the message. It puts no IDs or numbers in
+them, since a run ID can contain `500`. A message may quote Claude Code's own
 error text. If the finished bytes contain a trigger word or rewrite phrase,
 the bridge drops the quote and sends its fixed message alone.
 

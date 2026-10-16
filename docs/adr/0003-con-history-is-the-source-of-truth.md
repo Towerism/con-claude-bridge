@@ -27,10 +27,10 @@ run would lose its context without any error.
   ([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md),
   [ADR-0007](0007-run-lifecycle.md)). The bridge issued those IDs itself, so a
   match is exact and a miss is certain.
-- The first step of a turn always starts a new run. Its prompt is Con's
-  terminal context, then Con's history written as a transcript, then the new
-  message ([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md),
-  point 7). The bridge
+- The first step of a turn always starts a new run. Its prompt is Con's terminal
+  context, then Con's history written as a transcript, then the new message
+  ([the architecture
+  document](../architecture.md#how-the-bridge-handles-a-request)). The bridge
   doesn't resume an earlier Claude Code session, so Claude sees what Con has,
   the same as any other Con provider.
 - When a tool result's ID matches no live run, the bridge replays instead of
@@ -65,4 +65,4 @@ run would lose its context without any error.
   message. Con's `<terminal_context>` block changes every turn, so the bridge
   moves it from the system prompt to the start of the prompt. It also keeps the
   tool list in Con's order
-  ([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md), point 7).
+  ([ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md), point 1).

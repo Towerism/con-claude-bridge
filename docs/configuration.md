@@ -52,7 +52,8 @@ After changing the port, update `base_url` in `con.conf` as well.
 ### Values that aren't settings
 
 These follow from how Con and Claude Code behave, so they are fixed in the
-code. [ADR-0007](adr/0007-run-lifecycle.md) explains each.
+code. [ADR-0002](adr/0002-claude-code-as-a-step-in-cons-agent-loop.md) and
+[ADR-0007](adr/0007-run-lifecycle.md) explain them.
 
 | Value | Why it is fixed |
 |---|---|

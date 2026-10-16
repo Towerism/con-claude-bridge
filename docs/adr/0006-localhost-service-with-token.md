@@ -2,7 +2,9 @@
 
 **Status:** Accepted, 2026-10-16. Amended for issue #3: how the bridge finds
 `claude`. Amended for issue #5: where settings live, `setup` creating the
-token, what `/healthz` shows, and untrusted project instructions.
+token and a new token needing a restart, a set `claude_bin` being the only
+path checked, looking `claude` up before each run, what `/healthz` shows,
+and untrusted project instructions.
 
 ## Context
 
