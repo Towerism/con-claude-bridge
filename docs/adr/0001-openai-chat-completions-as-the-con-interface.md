@@ -1,6 +1,6 @@
 # ADR-0001: Use Con's openai-compatible provider with Chat Completions
 
-**Status:** Proposed, 2026-10-16
+**Status:** Accepted, 2026-10-16
 
 ## Context
 
@@ -44,7 +44,8 @@ con.agent.providers.openai-compatible.api_key = "<token from the bridge>"
 - Con's own tools reach Claude Code through the bridge (ADR-0002), so Con's tool
   cards and approval prompts keep working.
 - The Agent Client Protocol (ACP) is the long-term path. Zed uses it so the
-  editor can show Claude Code's own tool calls and its approval prompts for them.
+  editor can show Claude Code's own tool calls and its approval prompts for
+  them.
   Con 0.1.0-beta.135 can't prompt an ACP agent. It only reads conversation
   history over ACP when handing a chat to another agent. On 2026-10-16 Con's
   issue tracker had no request for ACP agent support. If Con adds it, switch to

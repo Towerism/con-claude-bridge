@@ -1,6 +1,7 @@
 # ADR-0008: Ship the bridge as an Arch User Repository (AUR) release package
 
-**Status:** Proposed, 2026-10-16
+**Status:** Accepted, 2026-10-16. Amended for issue #5: semantic-release isn't
+set up yet.
 
 ## Context
 
@@ -17,7 +18,7 @@ Facts checked on 2026-10-16:
 |---|---|
 | No AUR package is named `con-claude-bridge`. | AUR RPC v5 `info` and `search` |
 | Claude Code is in the AUR as `claude-code` (2.1.301-1). On the development machine, `/usr/bin/claude` comes from that package (2.1.299-1). Anthropic's own installer puts `claude` in `~/.local/bin` instead. | AUR RPC; `pacman -Qo /usr/bin/claude` |
-| The project tags releases with semantic-release, as `vX.Y.Z`. | The owner's git conventions: Conventional Commits, with only semantic-release creating tags |
+| Releases will be tagged by semantic-release, as `vX.Y.Z`. As of 2026-10-16 it isn't set up and no tags exist. | The owner's conventions: Conventional Commits, with only semantic-release creating tags; the repo's tag list |
 | The repo has no license file, and GitHub reports no license. | `gh repo view --json licenseInfo` |
 | The runtime needs only Python 3.12 or later and its standard library. | [ADR-0004](0004-python-standard-library-runtime.md) |
 | `python -m installer` puts modules in a folder named for the Python minor version, such as `/usr/lib/python3.14/site-packages`. The AUR doesn't rebuild packages when Arch moves to a new Python. | `sysconfig.get_path('purelib')` |

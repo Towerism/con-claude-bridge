@@ -1,7 +1,9 @@
 # ADR-0002: Claude Code acts as one step of Con's agent loop, using only Con's tools
 
-**Status:** Proposed, 2026-10-16. Replaces the first draft, which ran
-`claude -p` once per request and let Claude Code use its own tools.
+**Status:** Accepted, 2026-10-16. Replaces the first draft, which ran
+`claude -p` once per request and let Claude Code use its own tools. Amended
+for issue #5: the `agent_model` setting, and what happens when the self-test
+can't finish.
 
 ## Context
 
@@ -23,8 +25,8 @@ them, and sends the next request with each result tagged by its
 
 1. Claude Code gets only Con's tools. For each agent request, the bridge starts
    `claude -p` with every built-in tool turned off (`--tools ""`) and one
-   Model Context Protocol (MCP) server, which is how Claude Code takes tools from
-   outside. The bridge serves that server itself at
+   Model Context Protocol (MCP) server, which is how Claude Code takes tools
+   from outside. The bridge serves that server itself at
    `http://127.0.0.1:<port>/mcp/<run-id>`. It lists exactly the tools in Con's
    request, with the same names, descriptions and JSON schemas.
    `--allowedTools mcp__con` lets Claude Code call them without asking, since
@@ -52,15 +54,19 @@ them, and sends the next request with each result tagged by its
    Code 2.1.299 aborted an MCP call after 300 seconds with no response or
    progress, and Con's approval can take that long. So the bridge answers each
    MCP call as a Server-Sent Events (SSE) stream and sends a
-   `notifications/progress` message every 30 seconds, using the call's `progressToken`. It also sets a per-server
-   `timeout` in the `--mcp-config` it passes.
+   `notifications/progress` message every 30 seconds, using the call's
+   `progressToken`. It also sets a per-server `timeout` in the `--mcp-config`
+   it passes.
 6. Text and thinking stream as they arrive. With `--include-partial-messages`,
    Claude's text deltas become `content` deltas, and its thinking deltas become
    `reasoning_content` deltas, which Con shows as thinking.
 7. Which Claude Code configuration loads. Agent runs use `--setting-sources ""`
    and a settings file the bridge owns, so the user's hooks, plugins and
    permission rules don't load. They would otherwise act on Con's tool calls
-   where Con can't see them. The bridge also aims to leave out the global
+   where Con can't see them. The user's choice of model doesn't load either,
+   so the bridge's `agent_model` setting picks it, and Claude Code's default
+   applies when that isn't set
+   ([`configuration.md`](../configuration.md#bridge-settings)). The bridge also aims to leave out the global
    `~/.claude/CLAUDE.md`. The user wrote it for their own Claude Code sessions,
    with rules such as an issue pipeline and skills, and it would steer Con's
    agent. A `CLAUDE.md` in the project's working directory does apply.
@@ -99,3 +105,8 @@ them, and sends the next request with each result tagged by its
 - Each tool step depends on the `_meta["claudecode/toolUseId"]` field. The
   bridge runs a self-test for it at start-up. If the field is missing, it
   refuses agent requests instead of guessing which call a result belongs to.
+  The self-test may not finish, for example when the user service starts
+  before the network is up. The bridge then checks the field on every MCP
+  call instead, and starts refusing at the first call without it.
+  [The architecture document](../architecture.md#start-up-and-shutdown)
+  gives the details.

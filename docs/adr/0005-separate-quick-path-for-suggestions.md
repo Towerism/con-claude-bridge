@@ -1,6 +1,7 @@
 # ADR-0005: A separate, cheap path for suggestions and tab labels
 
-**Status:** Proposed, 2026-10-16
+**Status:** Accepted, 2026-10-16. Amended for issue #5: the quick model is a
+setting, `quick_model`, with `haiku` as its default.
 
 ## Context
 
@@ -21,7 +22,10 @@ The bridge serves two model names, both listed in `/v1/models`:
 | Model name | Profile | What runs |
 |---|---|---|
 | `claude-code` | `agent` | The full Claude Code run from [ADR-0002](0002-claude-code-as-a-step-in-cons-agent-loop.md) and [ADR-0003](0003-con-history-is-the-source-of-truth.md). |
-| `claude-quick` | `quick` | `claude -p --model haiku --tools "" --no-session-persistence --setting-sources ""`, one shot with no session, and Con's system prompt passed on as the system prompt. |
+| `claude-quick` | `quick` | `claude -p --model <quick_model> --tools "" --no-session-persistence --setting-sources ""`, one shot with no session, and Con's system prompt passed on as the system prompt. |
+
+`quick_model` is `haiku` unless the user sets it
+([`configuration.md`](../configuration.md#bridge-settings)).
 
 The bridge sends a request to `quick` when it names `claude-quick` or carries no
 `tools`. The second rule catches suggestions and tab labels even if the user

@@ -1,6 +1,6 @@
 # ADR-0004: Python 3 with the standard library only at runtime
 
-**Status:** Proposed, 2026-10-16
+**Status:** Accepted, 2026-10-16
 
 ## Context
 

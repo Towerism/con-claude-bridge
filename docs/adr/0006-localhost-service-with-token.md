@@ -1,6 +1,8 @@
 # ADR-0006: A localhost-only systemd user service with a bearer token
 
-**Status:** Proposed, 2026-10-16
+**Status:** Accepted, 2026-10-16. Amended for issue #3: how the bridge finds
+`claude`. Amended for issue #5: where settings live, `setup` creating the
+token, and what `/healthz` shows.
 
 ## Context
 
@@ -15,8 +17,8 @@ page pose as `localhost`.
 - The bridge binds to `127.0.0.1` only. The port defaults to `8765` and can be
   changed with `BRIDGE_PORT`.
 - Every route except `/healthz` requires `Authorization: Bearer <token>`. On
-  first start the bridge creates the token, 32 random bytes from
-  `secrets.token_urlsafe`, at `$XDG_CONFIG_HOME/con-claude-bridge/token` with
+  first start, or when `con-claude-bridge setup` runs, the bridge creates the
+  token, 32 random bytes from `secrets.token_urlsafe`, at `$XDG_CONFIG_HOME/con-claude-bridge/token` with
   mode `0600`. Con sends it as
   `con.agent.providers.openai-compatible.api_key`.
 - The bridge rejects any request whose `Host` header isn't
@@ -27,8 +29,8 @@ page pose as `localhost`.
   writes the `--mcp-config` file, with the URL and token header, to a temp
   file with mode `0600`. It passes the file's path to `claude` and deletes the
   file when the run ends. Tokens never go on a command line, since any local
-  user can read those in `/proc/<pid>/cmdline`. `<run-id>` is a random UUID (universally
-  unique identifier), and a request for an unknown run gets 404.
+  user can read those in `/proc/<pid>/cmdline`. `<run-id>` is a random UUID
+  (universally unique identifier), and a request for an unknown run gets 404.
 - The bridge rejects `POST` bodies whose `Content-Type` isn't
   `application/json` and sends no CORS headers. Browsers then can't make simple
   cross-site requests to it.
@@ -43,14 +45,18 @@ page pose as `localhost`.
   include `~/.local/bin`, so the bridge checks these in order and uses the
   first that exists:
   1. The `BRIDGE_CLAUDE_BIN` setting, an absolute path. The environment
-     variable wins over `config.toml`.
+     variable wins over `claude_bin` in
+     `$XDG_CONFIG_HOME/con-claude-bridge/config.toml`, the file that holds
+     every setting ([`configuration.md`](../configuration.md)).
   2. `~/.local/bin/claude`, where Anthropic's self-updating installer puts it.
   3. `claude` on `PATH`.
 
   At start-up the bridge logs the path it chose and the output of
   `claude --version`. If it finds nothing, the log lists the paths it checked.
   `/healthz` needs no token, so it says only `claude not found` and never shows
-  the home directory.
+  the home directory. It reports only an overall status, whether `claude` was
+  found and the self-test result, never paths, versions or run counts
+  ([the architecture document](../architecture.md#observability)).
 - Logs go to the journal. By default they hold metadata only: profile, run ID,
   state changes, duration and exit status, never prompts or replies.
 

@@ -1,6 +1,6 @@
 # ADR-0003: Con's history is the source of truth, and the bridge finds live runs by tool call ID
 
-**Status:** Proposed, 2026-10-16. Replaces the first draft, which hashed the
+**Status:** Accepted, 2026-10-16. Replaces the first draft, which hashed the
 history to map Con conversations to Claude Code sessions.
 
 ## Context
